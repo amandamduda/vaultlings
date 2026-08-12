@@ -74,6 +74,12 @@
     ],
     "experiments": {
       "typedRoutes": false
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "3bc28a94-dd73-47cc-b141-07f3e9752396"
+      }
+    },
+    "owner": "amandamduda"
   }
 }
