@@ -6,6 +6,12 @@ export const ART = {
   'band2': require('../assets/art/band2.webp'),
   'band3': require('../assets/art/band3.webp'),
   'band4': require('../assets/art/band4.webp'),
+  'crust0': require('../assets/art/crust0.webp'),
+  'crust1': require('../assets/art/crust1.webp'),
+  'crust2': require('../assets/art/crust2.webp'),
+  'crust3': require('../assets/art/crust3.webp'),
+  'crust4': require('../assets/art/crust4.webp'),
+  'crust5': require('../assets/art/crust5.webp'),
   'den-fen': require('../assets/art/den-fen.webp'),
   'den-gemmi': require('../assets/art/den-gemmi.webp'),
   'den-nix': require('../assets/art/den-nix.webp'),
@@ -74,3 +80,5 @@ export type ArtKey = keyof typeof ART;
 export const pose = (species: string, p: string) =>
   (ART as any)[`${species}-${p}`] ?? (ART as any)[`${species}-idle`] ?? ART['orin-idle'];
 export const den = (species: string) => (ART as any)[`den-${species}`] ?? ART['den-orin'];
+/** The buried crust, thickest first. Each strike takes one layer off. */
+export const CRUST = [ART.crust0, ART.crust1, ART.crust2, ART.crust3, ART.crust4, ART.crust5];

@@ -6,7 +6,7 @@ import Animated, {
   useSharedValue, useAnimatedStyle, withTiming, withSequence, withRepeat,
   withDelay, Easing, cancelAnimation, runOnJS,
 } from 'react-native-reanimated';
-import { ART } from '../art';
+import { ART, CRUST } from '../art';
 import { C, S, R, SPECIES, type SpeciesKey } from '../theme';
 import { Btn, st } from '../ui';
 
@@ -39,6 +39,9 @@ export default function Excavate({ species, onDone }: {
   const [burst, setBurst] = useState(0);
   const p = Math.min(1, hits / HITS);
   const beat = beatFor(p);
+  /** How much rock is still on top. One layer comes off every few strikes, so
+   *  the child sees the burial giving way rather than a number going up. */
+  const layer = Math.min(CRUST.length, Math.floor(hits / (HITS / CRUST.length)));
 
   // egg transform
   const shake = useSharedValue(0);
@@ -136,6 +139,9 @@ export default function Excavate({ species, onDone }: {
                         { width: eggW, height: eggW * 1.22, resizeMode: 'contain' }, seamS]} />
             </Animated.View>
 
+            {/* the rock on top of it, coming off a layer at a time */}
+            <Crust layer={layer} size={eggW * 1.42} />
+
             <Shards seq={burst} tint={sp.tint} power={p} />
           </Pressable>
 
@@ -218,12 +224,59 @@ function Reveal({ species, onDone }: { species: SpeciesKey; onDone: () => void }
   );
 }
 
+/**
+ * The crust.
+ *
+ * Six layers of rock lie over the vault, each with a wider hole broken through
+ * it than the last. Only the topmost intact layer is drawn; when a strike takes
+ * it off, that layer shatters outward and the next — with more of the vault
+ * showing through — settles into place. That is the whole trick: the reveal is
+ * the rock leaving, not the vault arriving.
+ */
+function Crust({ layer, size }: { layer: number; size: number }) {
+  const [shed, setShed] = useState<number[]>([]);
+  const prev = useRef(layer);
+
+  useEffect(() => {
+    if (layer > prev.current) setShed(x => [...x.slice(-2), prev.current]);
+    prev.current = layer;
+  }, [layer]);
+
+  return (
+    <View pointerEvents="none" style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center' }]}>
+      {layer < CRUST.length && <CrustLayer key={`on-${layer}`} src={CRUST[layer]} size={size} />}
+      {shed.map(i => <CrustLayer key={`off-${i}`} src={CRUST[i]} size={size} shattering />)}
+    </View>
+  );
+}
+
+function CrustLayer({ src, size, shattering }: {
+  src: number; size: number; shattering?: boolean;
+}) {
+  const t = useSharedValue(shattering ? 0 : 1);
+  useEffect(() => {
+    t.value = shattering
+      ? withTiming(1, { duration: 520, easing: Easing.out(Easing.quad) })
+      : withTiming(1, { duration: 260 });
+  }, []);
+
+  const style = useAnimatedStyle(() =>
+    shattering
+      ? { opacity: 1 - t.value, transform: [{ scale: 1 + t.value * 0.34 }, { rotate: `${t.value * 5}deg` }] }
+      : { opacity: t.value, transform: [{ scale: 1.06 - t.value * 0.06 }] });
+
+  return (
+    <Animated.Image source={src}
+      style={[{ position: 'absolute', width: size, height: size, resizeMode: 'contain' }, style]} />
+  );
+}
+
 /** Chips of rock thrown off by a strike. Sized by how far along the dig is, so
  *  the last hits visibly throw more material than the first. */
 function Shards({ seq, tint, power, big }: {
   seq: number; tint: string; power: number; big?: boolean;
 }) {
-  const n = big ? 16 : 6;
+  const n = big ? 18 : 9;
   if (!seq) return null;
   return (
     <View pointerEvents="none" style={StyleSheet.absoluteFill}>
@@ -260,7 +313,7 @@ function Shard({ i, n, tint, power, big }: {
     <Animated.View style={[{
       position: 'absolute', left: '50%', top: '50%',
       width: geom.sz, height: geom.sz * 0.7, borderRadius: 2,
-      backgroundColor: i % 3 === 0 ? tint : '#6C5A48',
+      backgroundColor: i % 4 === 0 ? tint : i % 2 ? '#4A423C' : '#6C5A48',
     }, style]} />
   );
 }
