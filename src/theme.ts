@@ -84,50 +84,50 @@ export const REAL = [
 /* ────────────────────────────────────────────────────────────────────────────
  * THE DEN
  *
- * Each Vaultling's home is one ultra-wide painting, roughly nine screens
- * across. The child does not navigate a tab bar; they walk their room. The
- * camera rests at one of three stations and every destination is an object
- * that is actually painted there — the tunnel mouth, the shelf of jars, the
- * family banner.
+ * Each Vaultling's home is one painting that fills the whole screen and runs
+ * about fourteen screens wide. The child does not navigate a tab bar; they
+ * walk their room. The camera rests at one of four stations and every
+ * destination is an object that is actually painted there — the tunnel mouth,
+ * the trading table, the shelf of wares, the family crest.
  *
- * All positions are fractions of the panorama's width and height, so they hold
- * for all five dens even though the paintings are not the same width.
+ * The paintings arrive as a wide strip, so the ceiling above and the floor
+ * below are grown from the painting's own edges before they ship. That is why
+ * there is no flat colour anywhere: the cave reaches all four edges of the
+ * glass.
+ *
+ * X positions are fractions of the painting's width, Y of its height, so they
+ * hold for all five dens even though the paintings are not the same width.
  * ──────────────────────────────────────────────────────────────────────────── */
 
 /** width ÷ height of each den painting, needed to size the pan */
 export const DEN_ASPECT: Record<SpeciesKey, number> = {
-  fen: 7.706, nix: 8.250, pyrin: 9.029, orin: 9.534, gemmi: 8.771,
+  fen: 5.378, nix: 6.383, pyrin: 6.078, orin: 6.671, gemmi: 6.671,
 };
 
 /** Where the camera comes to rest. Swiping moves one station at a time, so a
  *  destination can never end up half off-screen. */
 export const STATIONS = [
-  { k: 'tunnel', x: 0.085, name: 'The Tunnel' },
-  { k: 'nest',   x: 0.490, name: 'The Nest' },
-  { k: 'shelf',  x: 0.897, name: 'The Shelf' },
+  { k: 'tunnel', x: 0.075, name: 'The Tunnel' },
+  { k: 'nest',   x: 0.500, name: 'The Nest' },
+  { k: 'shelf',  x: 0.831, name: 'The Shelf' },
+  { k: 'crest',  x: 0.928, name: 'The Crest' },
 ] as const;
 export type StationKey = typeof STATIONS[number]['k'];
 export const HOME_STATION = 1;
 
-/** Where the Vaultling sleeps, in panorama fractions. */
-export const NEST = { x: 0.490, floor: 0.885 };
+/** Where the Vaultling stands, and the line its feet rest on. */
+export const NEST = { x: 0.500, floor: 0.617 };
 
 export const AREAS = [
-  { k: 'dig',    icon: '⛏️', label: 'Dig',     station: 'tunnel', x: 0.085, y: 0.56,
+  { k: 'dig',    icon: '⛏️', label: 'Dig',     station: 'tunnel', x: 0.075, y: 0.470,
     hint: 'the tunnel out of the den' },
-  { k: 'jars',   icon: '💰', label: 'My Jars', station: 'shelf',  x: 0.850, y: 0.62,
-    hint: 'three jars on the shelf' },
-  { k: 'market', icon: '🏺', label: 'Market',  station: 'shelf',  x: 0.897, y: 0.50,
+  { k: 'market', icon: '🏺', label: 'Market',  station: 'shelf',  x: 0.819, y: 0.487,
     hint: 'the trading table' },
-  { k: 'family', icon: '💌', label: 'Family',  station: 'shelf',  x: 0.945, y: 0.34,
-    hint: 'your family banner' },
+  { k: 'jars',   icon: '💰', label: 'My Jars', station: 'shelf',  x: 0.849, y: 0.497,
+    hint: 'your three jars on the shelf' },
+  { k: 'family', icon: '💌', label: 'Family',  station: 'crest',  x: 0.928, y: 0.415,
+    hint: 'your family crest' },
 ] as const;
 export type AreaKey = typeof AREAS[number]['k'];
-
-/** How much of the screen height the sharp painting occupies. Everything
- *  outside it is the same painting, blown up and blurred, so the light in the
- *  room reaches the edges of the phone. */
-export const BAND_H = 0.42;
-export const BAND_BOTTOM = 0.735;
 
 export const money = (n: number) => '$' + Number(n).toFixed(2);

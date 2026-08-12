@@ -12,8 +12,7 @@ import Animated, {
 import { den as denArt } from '../art';
 import {
   C, S, R, HIT, SPECIES, DWELLINGS, AREAS, STATIONS, DEN_ASPECT,
-  NEST, BAND_H, BAND_BOTTOM, HOME_STATION, money,
-  type AreaKey, type SpeciesKey,
+  NEST, HOME_STATION, money, type AreaKey, type SpeciesKey,
 } from '../theme';
 import { useGame, moodOf, moodLabel, jarTotal, FEED_COST } from '../store';
 import Creature, { Particles, FloatText, type CreatureHandle, type ActKind } from '../Creature';
@@ -21,14 +20,15 @@ import { buzz, nope, st } from '../ui';
 
 const { width: W, height: H } = Dimensions.get('window');
 
-const BAND = Math.round(H * BAND_H);
-const BAND_TOP = Math.round(H * BAND_BOTTOM) - BAND;
+/** The painting fills the glass. Its height is the screen's height, and its
+ *  width follows from the aspect — about fourteen screens of room. */
+const PAN_H = H;
 
 /** How far the room slides when the phone is tilted. Small on purpose — this
  *  is a peek into the room, not a second control scheme. */
-const TILT_BAND = 24;
-const TILT_BACK = 40;
-const TILT_CREATURE = 9;
+const TILT_ROOM = 26;
+const TILT_CREATURE = 11;
+const TILT_TIP = 9;
 
 /** Cheer is a reward the game plays, not a button — so the dock is a strict
  *  subset of what the creature knows how to perform. */
@@ -49,12 +49,8 @@ export default function Den({ onEnter, initialStation = HOME_STATION }: {
   const sp = SPECIES[species];
   const dw = DWELLINGS[Math.max(0, Math.min(DWELLINGS.length - 1, g.dwelling))];
 
-  const panoW = Math.round(BAND * DEN_ASPECT[species]);
+  const panoW = Math.round(PAN_H * DEN_ASPECT[species]);
   const maxScroll = Math.max(0, panoW - W);
-  /** The backdrop is the same painting at 3.2x, so it stays undistorted and
-   *  the blur has real shapes to work with. It tracks the camera at a slower
-   *  rate, which is what makes the room feel like it has depth. */
-  const backW = Math.round(H * 1.36 * DEN_ASPECT[species]);
   const offsets = useMemo(
     () => STATIONS.map(s => Math.max(0, Math.min(maxScroll, Math.round(s.x * panoW - W / 2)))),
     [panoW, maxScroll]);
@@ -68,6 +64,7 @@ export default function Den({ onEnter, initialStation = HOME_STATION }: {
     { seq: 0, kind: 'pet', text: '', color: C.gold });
 
   const tilt = useSharedValue(0);
+  const tip = useSharedValue(0);
 
   // keep the clock honest whenever the app comes back to the foreground
   useEffect(() => {
@@ -88,21 +85,24 @@ export default function Den({ onEnter, initialStation = HOME_STATION }: {
       if (!has || cancelled) return;
 
       DeviceMotion.setUpdateInterval(60);
-      let smooth = 0;
+      let sx = 0, sy = 0;
       sub = DeviceMotion.addListener(d => {
-        // gamma is the left/right roll of the device, in radians
-        const raw = d?.rotation?.gamma ?? 0;
-        const clamped = Math.max(-0.55, Math.min(0.55, raw)) / 0.55;
-        smooth = smooth * 0.86 + clamped * 0.14;      // low-pass, or it jitters
-        tilt.value = withTiming(smooth, { duration: 90, easing: Easing.linear });
+        // gamma is the left/right roll of the device, beta the forward pitch
+        const gx = Math.max(-0.55, Math.min(0.55, d?.rotation?.gamma ?? 0)) / 0.55;
+        const gy = Math.max(-0.45, Math.min(0.45, (d?.rotation?.beta ?? 0) + 0.5)) / 0.45;
+        sx = sx * 0.86 + gx * 0.14;      // low-pass, or it jitters
+        sy = sy * 0.90 + gy * 0.10;
+        tilt.value = withTiming(sx, { duration: 90, easing: Easing.linear });
+        tip.value = withTiming(sy, { duration: 120, easing: Easing.linear });
       });
     })();
 
     return () => { cancelled = true; sub?.remove(); };
   }, []);
 
-  const bandTilt = useAnimatedStyle(() => ({ transform: [{ translateX: tilt.value * TILT_BAND }] }));
-  const backTilt = useAnimatedStyle(() => ({ transform: [{ translateX: -tilt.value * TILT_BACK }] }));
+  const roomTilt = useAnimatedStyle(() => ({
+    transform: [{ translateX: tilt.value * TILT_ROOM }, { translateY: tip.value * TILT_TIP }],
+  }));
   const creatureTilt = useAnimatedStyle(() => ({ transform: [{ translateX: tilt.value * TILT_CREATURE }] }));
 
   // ── care ─────────────────────────────────────────────────────────────────
@@ -125,10 +125,9 @@ export default function Den({ onEnter, initialStation = HOME_STATION }: {
     scroller.current?.scrollTo({ x: offsets[n], animated: true });
   };
 
-  const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const x = e.nativeEvent.contentOffset.x;
-    setScrollX(x);
-  };
+  const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) =>
+    setScrollX(e.nativeEvent.contentOffset.x);
+
   const onSettled = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const x = e.nativeEvent.contentOffset.x;
     let best = 0;
@@ -138,25 +137,11 @@ export default function Den({ onEnter, initialStation = HOME_STATION }: {
 
   const mood = moodOf(g.happy, g.full);
   const canFeed = g.gems >= FEED_COST;
-  const backLeft = W / 2 - (scrollX + W / 2) * (backW / panoW);
 
   return (
     <View style={s.wrap}>
-      {/* The room's own light, filling the screen. The painting is nine screens
-          wide, so a cover-fit would show 7% of it and read as flat colour —
-          stretching the whole room across the glass and blurring it hard gives
-          the real distribution of light in the room instead. */}
-      <Animated.View style={[StyleSheet.absoluteFill, backTilt]}>
-        <Image source={denArt(species)} blurRadius={46}
-          style={{ position: 'absolute', top: -H * 0.18, left: backLeft,
-                   width: backW, height: H * 1.36, resizeMode: 'stretch', opacity: 0.95 }} />
-      </Animated.View>
-      <LinearGradient
-        colors={[sp.env[1], 'transparent', 'transparent', '#04070F']}
-        locations={[0, 0.26, 0.58, 0.95]} style={StyleSheet.absoluteFill} pointerEvents="none" />
-
-      {/* ── the room ─────────────────────────────────────────────────────── */}
-      <Animated.View style={[s.band, bandTilt]}>
+      {/* ── the room, edge to edge ───────────────────────────────────────── */}
+      <Animated.View style={[s.room, roomTilt]}>
         <ScrollView
           ref={scroller} horizontal
           showsHorizontalScrollIndicator={false}
@@ -166,10 +151,10 @@ export default function Den({ onEnter, initialStation = HOME_STATION }: {
           contentOffset={{ x: offsets[initialStation], y: 0 }}
           onScroll={onScroll} scrollEventThrottle={16}
           onMomentumScrollEnd={onSettled} onScrollEndDrag={onSettled}
-          contentContainerStyle={{ width: panoW, height: BAND }}>
+          contentContainerStyle={{ width: panoW, height: PAN_H }}>
 
           <Image source={denArt(species)}
-            style={{ width: panoW, height: BAND, resizeMode: 'cover' }} />
+            style={{ width: panoW, height: PAN_H, resizeMode: 'cover' }} />
 
           {/* how bright the home is — the ten dwellings, as light rather than art */}
           <View pointerEvents="none" style={[StyleSheet.absoluteFill, {
@@ -177,12 +162,12 @@ export default function Den({ onEnter, initialStation = HOME_STATION }: {
           <View pointerEvents="none" style={[StyleSheet.absoluteFill, {
             backgroundColor: dw.glow, opacity: 0.03 + (g.dwelling / 9) * 0.13 }]} />
 
-          {/* the Vaultling, asleep on its nest */}
+          {/* the Vaultling, on its nest */}
           <Animated.View pointerEvents="none" style={[{
-            position: 'absolute', left: NEST.x * panoW - W * 0.18,
-            top: NEST.floor * BAND - W * 0.36 * 1.18, width: W * 0.36, alignItems: 'center',
+            position: 'absolute', left: NEST.x * panoW - W * 0.22,
+            top: NEST.floor * PAN_H - W * 0.44 * 1.18, width: W * 0.44, alignItems: 'center',
           }, creatureTilt]}>
-            <Creature ref={creature} species={species} mood={mood} width={W * 0.36} />
+            <Creature ref={creature} species={species} mood={mood} width={W * 0.44} />
             <Particles kind={fx.kind} seq={fx.seq} />
             <FloatText text={fx.text} color={fx.color} seq={fx.seq} />
           </Animated.View>
@@ -194,13 +179,11 @@ export default function Den({ onEnter, initialStation = HOME_STATION }: {
         </ScrollView>
       </Animated.View>
 
-      {/* soft edges so the painting does not end on a hard line */}
-      <LinearGradient pointerEvents="none" colors={['#04070F', 'rgba(4,7,15,0.5)', 'transparent']}
-        locations={[0, 0.38, 1]}
-        style={{ position: 'absolute', top: BAND_TOP - 30, left: 0, right: 0, height: BAND * 0.30 }} />
-      <LinearGradient pointerEvents="none" colors={['transparent', 'rgba(4,7,15,0.9)', '#04070F']}
-        locations={[0, 0.35, 0.62]}
-        style={{ position: 'absolute', top: BAND_TOP + BAND * 0.86, left: 0, right: 0, height: BAND * 0.40 }} />
+      {/* the cave keeps going behind the chrome; these only buy legibility */}
+      <LinearGradient pointerEvents="none" colors={['rgba(4,7,15,0.86)', 'transparent']}
+        style={{ position: 'absolute', top: 0, left: 0, right: 0, height: H * 0.21 }} />
+      <LinearGradient pointerEvents="none" colors={['transparent', 'rgba(4,7,15,0.90)']}
+        style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: H * 0.24 }} />
 
       {/* ── who lives here ───────────────────────────────────────────────── */}
       <View style={s.hud} pointerEvents="box-none">
@@ -209,10 +192,8 @@ export default function Den({ onEnter, initialStation = HOME_STATION }: {
             <Text style={s.petName} numberOfLines={1}>{g.petName || sp.n}</Text>
             <Text style={s.petSub}>{moodLabel(g.happy, g.full)} · {dw.n}</Text>
           </View>
-          <View style={s.gemChip}>
-            <Text style={s.gemT}>◆ {g.gems}</Text>
-          </View>
-          <View style={[s.gemChip, { backgroundColor: 'rgba(143,227,176,0.14)' }]}>
+          <View style={s.gemChip}><Text style={s.gemT}>◆ {g.gems}</Text></View>
+          <View style={[s.gemChip, { backgroundColor: 'rgba(143,227,176,0.16)' }]}>
             <Text style={[s.gemT, { color: C.money }]}>{money(jarTotal(g.jars))}</Text>
           </View>
         </View>
@@ -223,6 +204,7 @@ export default function Den({ onEnter, initialStation = HOME_STATION }: {
       </View>
 
       {/* ── where in the room you are ────────────────────────────────────── */}
+      <Text style={s.stationName} pointerEvents="none">{STATIONS[station].name}</Text>
       <View style={s.stations} pointerEvents="box-none">
         {STATIONS.map((stn, i) => (
           <Pressable key={stn.k} accessibilityRole="button" accessibilityLabel={`Go to ${stn.name}`}
@@ -230,7 +212,6 @@ export default function Den({ onEnter, initialStation = HOME_STATION }: {
             style={[s.dot, i === station && { backgroundColor: C.gold, width: 22 }]} />
         ))}
       </View>
-      <Text style={s.stationName} pointerEvents="none">{STATIONS[station].name}</Text>
 
       {scrollX > 12 && <Chevron dir="left" onPress={() => goStation(station - 1)} />}
       {scrollX < maxScroll - 12 && <Chevron dir="right" onPress={() => goStation(station + 1)} />}
@@ -273,11 +254,11 @@ function Hotspot({ a, panoW, unseen, onPress }: {
   }, [unseen]);
 
   const ring = useAnimatedStyle(() => ({
-    opacity: 0.55 * (1 - pulse.value), transform: [{ scale: 1 + pulse.value * 0.85 }],
+    opacity: 0.6 * (1 - pulse.value), transform: [{ scale: 1 + pulse.value * 0.9 }],
   }));
 
   return (
-    <View style={{ position: 'absolute', left: a.x * panoW - 44, top: a.y * BAND - 44,
+    <View style={{ position: 'absolute', left: a.x * panoW - 44, top: a.y * PAN_H - 44,
                    width: 88, alignItems: 'center' }}>
       <Pressable accessibilityRole="button" accessibilityLabel={`${a.label} — ${a.hint}`}
         onPress={onPress} style={({ pressed }) => [s.hot, { transform: [{ scale: pressed ? 0.9 : 1 }] }]}>
@@ -318,16 +299,17 @@ function Meter({ label, v, color }: { label: string; v: number; color: string })
 
 const s = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: '#04070F' },
-  band: { position: 'absolute', top: BAND_TOP, left: 0, right: 0, height: BAND },
+  /** slightly oversized so the tilt never exposes an edge */
+  room: { position: 'absolute', top: 0, left: -TILT_ROOM, right: -TILT_ROOM, height: PAN_H },
 
   hud: { position: 'absolute', top: 56, left: S.lg, right: S.lg },
   hudTop: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   petName: { color: C.ink, fontSize: 21, fontWeight: '800', letterSpacing: -0.3,
              textShadowColor: '#000', textShadowRadius: 10 },
   petSub: { color: C.mist, fontSize: 11, marginTop: 1, textShadowColor: '#000', textShadowRadius: 8 },
-  gemChip: { backgroundColor: 'rgba(255,201,77,0.16)', borderRadius: R.pill,
+  gemChip: { backgroundColor: 'rgba(255,201,77,0.18)', borderRadius: R.pill,
              paddingHorizontal: 11, paddingVertical: 6,
-             borderWidth: 1, borderColor: 'rgba(255,201,77,0.28)' },
+             borderWidth: 1, borderColor: 'rgba(255,201,77,0.30)' },
   gemT: { color: C.gold, fontWeight: '800', fontSize: 12.5 },
   meters: { flexDirection: 'row', gap: S.md, marginTop: S.md },
   meterTop: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 },
@@ -341,24 +323,25 @@ const s = StyleSheet.create({
          backgroundColor: C.gold, borderWidth: 2.5, borderColor: 'rgba(20,32,61,0.9)',
          shadowColor: '#000', shadowOpacity: 0.65, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
   hotRing: { position: 'absolute', width: 54, height: 54, borderRadius: 27,
-             borderWidth: 2, borderColor: C.gold },
+             borderWidth: 2.5, borderColor: C.gold },
   hotIcon: { fontSize: 24 },
   hotLabel: { color: C.ink, fontSize: 10.5, fontWeight: '800', marginTop: 5,
               textShadowColor: '#000', textShadowRadius: 8 },
 
-  stations: { position: 'absolute', bottom: 172, left: 0, right: 0,
+  stations: { position: 'absolute', bottom: 168, left: 0, right: 0,
               flexDirection: 'row', justifyContent: 'center', gap: 7 },
   dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: 'rgba(234,240,255,0.34)' },
-  stationName: { position: 'absolute', bottom: 188, left: 0, right: 0, textAlign: 'center',
-                 color: C.mist, fontSize: 10, fontWeight: '800', letterSpacing: 1.6 },
-  chev: { position: 'absolute', top: BAND_TOP + BAND / 2 - 22, width: HIT, height: HIT,
+  stationName: { position: 'absolute', bottom: 184, left: 0, right: 0, textAlign: 'center',
+                 color: C.ink, fontSize: 10, fontWeight: '800', letterSpacing: 1.8,
+                 textShadowColor: '#000', textShadowRadius: 8 },
+  chev: { position: 'absolute', top: H * 0.48, width: HIT, height: HIT,
           alignItems: 'center', justifyContent: 'center', borderRadius: 22,
-          backgroundColor: 'rgba(8,14,30,0.55)' },
+          backgroundColor: 'rgba(8,14,30,0.5)' },
   chevT: { color: C.ink, fontSize: 26, fontWeight: '800', marginTop: -4 },
 
   dock: { position: 'absolute', left: S.md, right: S.md, bottom: 34,
           flexDirection: 'row', gap: 7, padding: 9,
-          backgroundColor: 'rgba(8,14,30,0.90)', borderRadius: R.lg,
+          backgroundColor: 'rgba(8,14,30,0.88)', borderRadius: R.lg,
           borderWidth: 1, borderColor: C.line },
   care: { flex: 1, minHeight: 68, borderRadius: R.md, alignItems: 'center', justifyContent: 'center',
           backgroundColor: 'rgba(29,47,94,0.92)', borderWidth: 1, borderColor: C.line },
