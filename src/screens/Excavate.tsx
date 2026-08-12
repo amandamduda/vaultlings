@@ -9,6 +9,7 @@ import Animated, {
 import { ART, CRUST } from '../art';
 import { C, S, R, SPECIES, type SpeciesKey } from '../theme';
 import { Btn, st } from '../ui';
+import { FRAME_RATIO } from '../Creature';
 
 const { width: W, height: H } = Dimensions.get('window');
 
@@ -204,7 +205,7 @@ function Reveal({ species, onDone }: { species: SpeciesKey; onDone: () => void }
         <Animated.View style={[s.raysRing, { borderColor: sp.tint }, rayS]} />
         <Animated.View style={[{ alignItems: 'center' }, creatureS]}>
           <Image source={ART[`${species}-cheer` as 'fen-cheer']}
-            style={{ width: cw, height: cw * 1.18, resizeMode: 'contain' }} />
+            style={{ width: cw, height: cw * FRAME_RATIO, resizeMode: 'contain' }} />
           <Image source={ART[`eggopen-${species}` as 'eggopen-fen']}
             style={{ width: cw * 0.92, height: cw * 0.42, resizeMode: 'contain', marginTop: -18 }} />
         </Animated.View>

@@ -1,11 +1,6 @@
 /** Every image the app ships. React Native needs a literal require() per
  *  asset, so this map is generated rather than written by hand. */
 export const ART = {
-  'band0': require('../assets/art/band0.webp'),
-  'band1': require('../assets/art/band1.webp'),
-  'band2': require('../assets/art/band2.webp'),
-  'band3': require('../assets/art/band3.webp'),
-  'band4': require('../assets/art/band4.webp'),
   'crust0': require('../assets/art/crust0.webp'),
   'crust1': require('../assets/art/crust1.webp'),
   'crust2': require('../assets/art/crust2.webp'),
@@ -42,7 +37,6 @@ export const ART = {
   'gemmi-idle': require('../assets/art/gemmi-idle.webp'),
   'gemmi-sleep': require('../assets/art/gemmi-sleep.webp'),
   'glow': require('../assets/art/glow.webp'),
-  'home': require('../assets/art/home.webp'),
   'nix': require('../assets/art/nix.webp'),
   'nix-cheer': require('../assets/art/nix-cheer.webp'),
   'nix-eat': require('../assets/art/nix-eat.webp'),
@@ -56,7 +50,6 @@ export const ART = {
   'orin-happy': require('../assets/art/orin-happy.webp'),
   'orin-hungry': require('../assets/art/orin-hungry.webp'),
   'orin-idle': require('../assets/art/orin-idle.webp'),
-  'orin-scene': require('../assets/art/orin-scene.webp'),
   'orin-sleep': require('../assets/art/orin-sleep.webp'),
   'pyrin': require('../assets/art/pyrin.webp'),
   'pyrin-cheer': require('../assets/art/pyrin-cheer.webp'),
@@ -70,8 +63,6 @@ export const ART = {
   'sil-nix': require('../assets/art/sil-nix.webp'),
   'sil-orin': require('../assets/art/sil-orin.webp'),
   'sil-pyrin': require('../assets/art/sil-pyrin.webp'),
-  'sovereign': require('../assets/art/sovereign.webp'),
-  'sovereign-scene': require('../assets/art/sovereign-scene.webp'),
   'strata': require('../assets/art/strata.webp'),
 } as const;
 

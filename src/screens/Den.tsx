@@ -15,7 +15,7 @@ import {
   NEST, HOME_STATION, money, type AreaKey, type SpeciesKey,
 } from '../theme';
 import { useGame, moodOf, moodLabel, jarTotal, FEED_COST } from '../store';
-import Creature, { Particles, FloatText, type CreatureHandle, type ActKind } from '../Creature';
+import Creature, { Particles, FloatText, FRAME_RATIO, type CreatureHandle, type ActKind } from '../Creature';
 import { buzz, nope, st } from '../ui';
 
 const { width: W, height: H } = Dimensions.get('window');
@@ -165,7 +165,7 @@ export default function Den({ onEnter, initialStation = HOME_STATION }: {
           {/* the Vaultling, on its nest */}
           <Animated.View pointerEvents="none" style={[{
             position: 'absolute', left: NEST.x * panoW - W * 0.22,
-            top: NEST.floor * PAN_H - W * 0.44 * 1.18, width: W * 0.44, alignItems: 'center',
+            top: NEST.floor * PAN_H - W * 0.44 * FRAME_RATIO, width: W * 0.44, alignItems: 'center',
           }, creatureTilt]}>
             <Creature ref={creature} species={species} mood={mood} width={W * 0.44} />
             <Particles kind={fx.kind} seq={fx.seq} />

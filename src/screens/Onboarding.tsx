@@ -149,6 +149,11 @@ function Hall({ onBack, onWake }: { onBack: () => void; onWake: (k: SpeciesKey) 
           return (
             <View key={k} style={{ width, height }}>
               <LinearGradient colors={s2.env} style={StyleSheet.absoluteFill} />
+              {/* the shape of what is inside, showing faintly through the stone */}
+              <Image source={ART[('sil-' + k) as keyof typeof ART]}
+                style={{ position: 'absolute', top: height * 0.16, alignSelf: 'center',
+                         width: width * 0.46, height: width * 0.46 * 1.62,
+                         resizeMode: 'contain', opacity: 0.16, tintColor: s2.tint }} />
               <EggPulse source={ART[('egg-' + k) as keyof typeof ART]} width={width} />
               <View style={s.info}>
                 <Text style={[s.nm, { color: s2.tint }]}>{s2.n.toUpperCase()}</Text>

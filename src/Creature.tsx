@@ -12,6 +12,11 @@ export type ActKind = 'feed' | 'pet' | 'wash' | 'toy' | 'cheer';
 
 export type CreatureHandle = { play: (kind: ActKind) => void };
 
+/** Every pose ships on one 336x460 canvas, bottom-anchored, so the creature
+ *  keeps its size and its footing when the frame changes. Lay it out with this
+ *  ratio and `contain` never letterboxes. */
+export const FRAME_RATIO = 460 / 336;
+
 /** Each care action is a distinct little performance: its own frame from the
  *  pose sheet, its own motion, and its own particles. The frame and the motion
  *  are separate on purpose — if a pose frame is ever missing, the motion still
@@ -119,7 +124,7 @@ const Creature = forwardRef<CreatureHandle, Props>(function Creature(
   return (
     <Animated.Image
       source={poseArt(species, frame)}
-      style={[{ width, height: width * 1.18, resizeMode: 'contain' }, style as any, anim]}
+      style={[{ width, height: width * FRAME_RATIO, resizeMode: 'contain' }, style as any, anim]}
       accessibilityIgnoresInvertColors
     />
   );
