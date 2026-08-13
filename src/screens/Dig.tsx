@@ -1,15 +1,22 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Dimensions } from 'react-native';
-import { Canvas, Group, Rect, Circle, RoundedRect, Blur, Paint } from '@shopify/react-native-skia';
+import { Canvas, Group, Rect, Circle, RoundedRect, Blur } from '@shopify/react-native-skia';
 import * as Haptics from 'expo-haptics';
 import { C, S, R, HIT } from '../theme';
-import { useGame, RUNS_PER_DAY, GEM_CAP } from '../store';
+import {
+  useGame, RUNS_PER_DAY, GEM_CAP, starsTotal, STARS_POSSIBLE, levelsBeaten,
+  type LevelReward,
+} from '../store';
 import { Screen, Card, Btn, st, buzz, ok, nope } from '../ui';
 import {
-  newGame, move, stepRocks, stepSnatchers, trySpawn, blast, layerAt,
-  COLS, ROWS, EMPTY, DIRT, ROCK, GEM, BIGGEM, HARD,
+  move, stepRocks, stepSnatchers, trySpawn, blast, layerAt,
+  COLS, ROWS, EMPTY, ROCK, GEM, BIGGEM, HARD,
   type GameState, type Ev,
 } from '../game/engine';
+import {
+  LEVELS, LEVEL_COUNT, PER_TIER, TIERS, levelAt, newLevel, gemPar, climbHeight,
+  STAR_LABELS,
+} from '../game/levels';
 
 const { width: W, height: H } = Dimensions.get('window');
 const TILE = Math.floor(W / COLS);
@@ -20,75 +27,193 @@ const VIS_ROWS = Math.ceil(BOARD_H / TILE) + 2;
 const LIGHT = 3.4;
 const TICK = 460;
 
+type Finished = {
+  level: number; reward: LevelReward; found: number; par: number;
+  escaped: boolean; hurt: boolean;
+};
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * THE LONG CLIMB
+ *
+ * Thirty levels. You go down, and you climb back out — deeper every time.
+ * This screen is the map, the level, and the moment afterwards; the rules all
+ * live in game/levels.ts and game/engine.ts, which are pure and were tested
+ * before a pixel of this existed.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
 export default function Dig({ onBack }: { onBack: () => void }) {
   const g = useGame();
-  const [playing, setPlaying] = useState(false);
-  const [result, setResult] = useState<
-    { gems: number; credited: number; xp: number; climbed: number; won: boolean } | null>(null);
+  const [playing, setPlaying] = useState<number | null>(null);
+  const [done, setDone] = useState<Finished | null>(null);
   const left = RUNS_PER_DAY - g.runsToday;
 
-  if (playing) {
+  const enter = (n: number) => {
+    if (!g.startLevel(n)) { nope(); return; }
+    setDone(null);
+    setPlaying(n);
+  };
+
+  if (playing !== null) {
     return (
       <Board
-        streak={g.streak} lantern={!!g.worn.lamp} helm={!!g.worn.helm}
-        onQuit={(gems, climbed, won) => {
-          const r = g.endRun(gems, climbed, won);
-          setPlaying(false);
-          setResult({ gems, credited: r.gems, xp: r.xp, climbed, won });
-          ok();
+        level={playing} streak={g.streak} lantern={!!g.worn.lamp} helm={!!g.worn.helm}
+        onQuit={(o) => {
+          const reward = g.endLevel(playing, o);
+          setPlaying(null);
+          setDone({ level: playing, reward, found: o.gems, par: o.par,
+                    escaped: o.escaped, hurt: o.hurt });
+          o.escaped ? ok() : buzz();
         }} />
     );
   }
 
+  if (done) return <Result f={done} left={left} onAgain={enter} onMap={() => setDone(null)} />;
+
   return (
-    <Screen title="Expedition" sub="You start at the bottom. Dig upward, and get out." onBack={onBack}>
-      {result && (
-        <Card title={result.won ? 'Daylight' : `You climbed ${result.climbed}m`}>
-          <Text style={s.bigNum}>◆ {result.credited}</Text>
-          <Text style={st.body}>
-            {result.won
-              ? 'You broke through to the surface. Your Vaultling saw the sky.'
-              : result.credited < result.gems
-                ? `You found ◆${result.gems}, but today's cap is ◆${GEM_CAP}. The rest stays in the rock.`
-                : 'Everything you carried is banked. Nothing is lost by turning back.'}
-          </Text>
-          <Text style={st.note}>+{result.xp} XP</Text>
-        </Card>
-      )}
+    <Screen title="The Long Climb"
+      sub="You go down, and you climb back out. Further every time."
+      onBack={onBack}>
 
-      <Card title="How it works">
-        <Text style={st.body}>
-          You start at the very bottom. Dig upward with the arrows and climb out through the strata:
-          The Deep, Crystal Depths, Ember Reach, Tide Hollow, Verdant Root, then daylight. Gems are
-          worth ◆1, big gems ◆5. Rocks fall when you undercut them, and something down there wants
-          what you are carrying.
-        </Text>
-        <Text style={st.body}>
-          Three hearts and then you are out — but you keep every gem you found. Turning back early is
-          always allowed and always pays.
-        </Text>
-        <Text style={st.note}>
-          The deepest rock is the richest and the most dangerous, so staying low pays better and
-          climbing is the safe play. Gems buy cosmetics, decorations and better homes. They can never
-          be bought with money, and money can never be bought with them.
-        </Text>
-      </Card>
-
-      <Card title="Today">
+      <Card title="Where you are">
         <View style={s.statRow}>
-          <Stat n={String(left)} l={`run${left === 1 ? '' : 's'} left`} />
-          <Stat n={`◆${g.gemsToday}`} l={`of ◆${GEM_CAP} cap`} />
-          <Stat n={`🔥${g.streak}`} l="day streak" />
-          <Stat n={`${g.bestClimb}m`} l="best climb" />
+          <Stat n={`${levelsBeaten(g.stars)}/${LEVEL_COUNT}`} l="levels done" />
+          <Stat n={`★ ${starsTotal(g.stars)}`} l={`of ${STARS_POSSIBLE}`} />
+          <Stat n={String(left)} l={`escape${left === 1 ? '' : 's'} left today`} />
+          <Stat n={`◆${g.gemsToday}`} l={`of ◆${GEM_CAP}`} />
         </View>
         <Text style={st.note}>
-          Five runs a day, and a gem cap. A game a child cannot grind is a game a child can put down.
+          Only getting out spends one of the day's five. Trying again after a hard time costs
+          nothing and takes nothing away.
         </Text>
       </Card>
 
-      <View style={{ marginTop: S.lg }}>
-        <Btn label={left > 0 ? 'Begin the climb' : 'Come back tomorrow'} wide disabled={left <= 0}
-          onPress={() => { if (g.startRun()) { setResult(null); setPlaying(true); } else nope(); }} />
+      {LEVELS.map(lv => {
+        const stars = g.stars[lv.n] ?? 0;
+        const locked = lv.n > g.unlocked;
+        const isNext = lv.n === g.unlocked;
+        const head = (lv.n - 1) % PER_TIER === 0;
+        return (
+          <View key={lv.n}>
+            {head && (
+              <View style={s.tierHead}>
+                <View style={[s.tierBar, { backgroundColor: layerAt(lv.start).vein }]} />
+                <Text style={s.tierT}>{TIERS[lv.tier].teaches}</Text>
+              </View>
+            )}
+            <LevelRow lv={lv} stars={stars} locked={locked} next={isNext}
+              canPlay={left > 0} onPress={() => enter(lv.n)} />
+          </View>
+        );
+      })}
+
+      <Card title="How the stars work">
+        <Text style={st.body}>
+          Every level asks the same three things, so you never have to read to know what is wanted:
+          <Text style={{ color: C.gold, fontWeight: '800' }}> get out</Text>, bring treasure home, and
+          come home whole.
+        </Text>
+        <Text style={st.note}>
+          Run straight for daylight and you will miss the treasure. Linger for the treasure and you
+          risk the third star. That choice is the game.
+        </Text>
+      </Card>
+    </Screen>
+  );
+}
+
+function LevelRow({ lv, stars, locked, next, canPlay, onPress }: {
+  lv: typeof LEVELS[number]; stars: number; locked: boolean; next: boolean;
+  canPlay: boolean; onPress: () => void;
+}) {
+  const L = layerAt(lv.start);
+  const label = locked
+    ? `Level ${lv.n}, ${lv.name}, locked`
+    : `Level ${lv.n}, ${lv.name}, ${climbHeight(lv.n)} metres to climb, ${stars} of 3 stars`;
+  return (
+    <Pressable accessibilityRole="button" accessibilityLabel={label}
+      accessibilityState={{ disabled: locked }} disabled={locked}
+      onPress={() => { buzz(); onPress(); }}
+      style={({ pressed }) => [
+        s.lvl, { backgroundColor: locked ? 'rgba(16,26,52,0.55)' : L.d1 },
+        next && !locked && { borderColor: C.gold, borderWidth: 2 },
+        locked && { opacity: 0.5 },
+        { transform: [{ scale: pressed ? 0.985 : 1 }] },
+      ]}>
+      <View style={[s.lvlN, { backgroundColor: locked ? 'rgba(0,0,0,0.35)' : L.dark }]}>
+        <Text style={[s.lvlNT, { color: locked ? C.mist : L.vein }]}>{locked ? '🔒' : lv.n}</Text>
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={s.lvlName}>{lv.name}</Text>
+        <Text style={s.lvlSub}>
+          {locked ? 'Finish the one before' : `${climbHeight(lv.n)}m to climb · ${L.name.toLowerCase()}`}
+        </Text>
+      </View>
+      <View style={{ alignItems: 'flex-end', gap: 3 }}>
+        <Text style={s.stars}>
+          {[0, 1, 2].map(i => (stars > i ? '★' : '☆')).join('')}
+        </Text>
+        {next && !locked && (
+          <Text style={[s.lvlGo, !canPlay && { color: C.mist }]}>
+            {canPlay ? 'NEXT' : 'TOMORROW'}
+          </Text>
+        )}
+      </View>
+    </Pressable>
+  );
+}
+
+/** What happened, in the order a child cares about it. */
+function Result({ f, left, onAgain, onMap }: {
+  f: Finished; left: number; onAgain: (n: number) => void; onMap: () => void;
+}) {
+  const lv = levelAt(f.level);
+  const got = [f.escaped, f.found >= f.par, !f.hurt];
+  const next = Math.min(LEVEL_COUNT, f.level + 1);
+  return (
+    <Screen title={f.escaped ? 'Daylight' : 'You turned back'}
+      sub={`Level ${f.level} · ${lv.name}`} onBack={onMap}>
+
+      <Card title={f.escaped ? (f.reward.improved ? 'A new best' : 'Home again') : 'Still yours'}>
+        <Text style={s.starsBig}>
+          {[0, 1, 2].map(i => (f.reward.stars > i ? '★' : '☆')).join(' ')}
+        </Text>
+        {STAR_LABELS.map((t, i) => (
+          <Text key={t} style={[st.body, { color: got[i] && f.escaped ? C.teal : C.mist }]}>
+            {f.escaped && got[i] ? '✓ ' : '· '}{t}
+            {i === 1 ? `  (◆${f.found} of ◆${f.par})` : ''}
+          </Text>
+        ))}
+      </Card>
+
+      <Card title="Brought home">
+        <Text style={s.bigNum}>◆ {f.reward.gems}</Text>
+        <Text style={st.body}>
+          {f.escaped
+            ? 'Everything you carried, banked.'
+            : `You found ◆${f.found} down there and brought half of it home. A hard time in a cave was never nothing.`}
+        </Text>
+        {f.reward.capped && (
+          <Text style={st.note}>Today's cap is ◆{GEM_CAP}. The rest stays in the rock until tomorrow.</Text>
+        )}
+        <Text style={st.note}>+{f.reward.xp} XP</Text>
+      </Card>
+
+      <View style={{ gap: S.sm, marginTop: S.lg }}>
+        {f.escaped && f.level < LEVEL_COUNT && (
+          <Btn label={left > 0 ? `Go deeper — level ${next}` : 'Come back tomorrow'}
+            wide disabled={left <= 0} onPress={() => onAgain(next)} />
+        )}
+        {f.escaped && f.level >= LEVEL_COUNT && (
+          <Card title="Your Vaultling saw the sky">
+            <Text style={st.body}>
+              You climbed the whole world and came out the top. That is the last level, and the one
+              thing care alone could never do.
+            </Text>
+          </Card>
+        )}
+        <Btn label={f.escaped ? 'Try it again for more stars' : 'Try again'} tone="ghost" wide
+          onPress={() => onAgain(f.level)} />
+        <Btn label="Back to the map" tone="ghost" wide onPress={onMap} />
       </View>
     </Screen>
   );
@@ -111,17 +236,31 @@ function Stat({ n, l }: { n: string; l: string }) {
  * existed.
  * ══════════════════════════════════════════════════════════════════════════ */
 
-function Board({ streak, lantern, helm, onQuit }: {
-  streak: number; lantern: boolean; helm: boolean;
-  onQuit: (gems: number, climbed: number, won: boolean) => void;
+export type QuitInfo = { escaped: boolean; gems: number; hurt: boolean; climbed: number; par: number };
+
+function Board({ level, streak, lantern, helm, onQuit }: {
+  level: number; streak: number; lantern: boolean; helm: boolean;
+  onQuit: (o: QuitInfo) => void;
 }) {
-  const game = useRef<GameState>(newGame(streak));
-  if (helm && game.current.hp === 3) game.current.hp = 4;
+  const game = useRef<GameState | null>(null);
+  const par = useRef(0);
+  const fullHp = useRef(0);
+  if (!game.current) {
+    const gm = newLevel(level, streak);
+    if (helm) gm.hp += 1;                     // the Helm, bought with gems, not money
+    game.current = gm;
+    par.current = gemPar(gm);
+    fullHp.current = gm.hp;
+  }
   const [, force] = useState(0);
   const redraw = useCallback(() => force(x => x + 1), []);
   const [flash, setFlash] = useState(0);
-
   const light = LIGHT + (lantern ? 1.3 : 0);
+
+  const finish = (gm: GameState, escaped: boolean) => onQuit({
+    escaped, gems: gm.gems, hurt: gm.hp < fullHp.current,
+    climbed: gm.climb, par: par.current,
+  });
 
   const fire = (evs: Ev[]) => {
     for (const e of evs) {
@@ -133,16 +272,16 @@ function Board({ streak, lantern, helm, onQuit }: {
   };
 
   const go = (dc: number, dr: number) => {
-    const gm = game.current;
+    const gm = game.current!;
     if (gm.over) return;
     fire(move(gm, dc, dr));
     reveal(gm, light);
     redraw();
-    if (gm.over) setTimeout(() => onQuit(gm.gems, gm.climb, gm.won), 620);
+    if (gm.over) setTimeout(() => finish(gm, gm.won), 620);
   };
 
   const boom = () => {
-    const gm = game.current;
+    const gm = game.current!;
     if (gm.over || gm.blasts <= 0) { nope(); return; }
     fire(blast(gm));
     reveal(gm, light);
@@ -151,22 +290,23 @@ function Board({ streak, lantern, helm, onQuit }: {
 
   // the world keeps moving whether or not the child does
   useEffect(() => {
-    reveal(game.current, light);
+    reveal(game.current!, light);
     redraw();
     const id = setInterval(() => {
-      const gm = game.current;
+      const gm = game.current!;
       if (gm.over) return;
       fire(stepRocks(gm));
       fire(stepSnatchers(gm));
       trySpawn(gm);
       reveal(gm, light);
       redraw();
-      if (gm.over) setTimeout(() => onQuit(gm.gems, gm.climb, gm.won), 620);
+      if (gm.over) setTimeout(() => finish(gm, gm.won), 620);
     }, TICK);
     return () => clearInterval(id);
   }, []);
 
-  const gm = game.current;
+  const gm = game.current!;
+  const lv = levelAt(level);
   const L = layerAt(gm.py);
   const camRow = Math.max(0, Math.min(ROWS - VIS_ROWS, gm.py - Math.floor(VIS_ROWS * 0.58)));
   const rows: React.ReactNode[] = [];
@@ -176,12 +316,11 @@ function Board({ streak, lantern, helm, onQuit }: {
     for (let c = 0; c < COLS; c++) {
       const i = r * COLS + c;
       const x = c * TILE, y = (r - camRow) * TILE;
-      const hid = gm.hidden[i] === 1;
       const t = gm.grid[i];
       const d = Math.hypot(c - gm.px, r - gm.py);
       const lit = Math.max(0, 1 - d / light);
 
-      if (hid) {
+      if (gm.hidden[i] === 1) {
         rows.push(<Rect key={`h${i}`} x={x} y={y} width={TILE} height={TILE} color="#04060C" />);
         continue;
       }
@@ -208,15 +347,18 @@ function Board({ streak, lantern, helm, onQuit }: {
   }
 
   const px = gm.px * TILE, py = (gm.py - camRow) * TILE;
+  const toGo = Math.max(0, gm.py - 2);
 
   return (
     <View style={s.wrap}>
       <View style={s.hud}>
-        <Text style={s.layer}>{L.name}</Text>
+        <Text style={s.layer}>{lv.n}. {lv.name.toUpperCase()}</Text>
         <View style={{ flex: 1 }} />
         <Text style={s.hudT}>{'❤️'.repeat(Math.max(0, gm.hp))}</Text>
-        <Text style={[s.hudT, { color: C.gold }]}>◆{gm.gems}</Text>
-        <Text style={s.hudT}>↑{gm.climb}m</Text>
+        <Text style={[s.hudT, { color: gm.gems >= par.current ? C.teal : C.gold }]}>
+          ◆{gm.gems}/{par.current}
+        </Text>
+        <Text style={s.hudT}>↑{toGo}m</Text>
       </View>
 
       <Canvas style={{ width: BOARD_W, height: BOARD_H, alignSelf: 'center' }}>
@@ -257,8 +399,8 @@ function Board({ streak, lantern, helm, onQuit }: {
             <Text style={{ fontSize: 26 }}>💥</Text>
             <Text style={s.boomN}>{gm.blasts}</Text>
           </Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel="Turn back and keep your gems"
-            onPress={() => { buzz(); onQuit(gm.gems, gm.climb, false); }} style={s.out}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Turn back, keeping half your gems"
+            onPress={() => { buzz(); finish(gm, false); }} style={s.out}>
             <Text style={s.outT}>Turn back</Text>
           </Pressable>
         </View>
@@ -301,7 +443,7 @@ const s = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: '#04060C' },
   hud: { flexDirection: 'row', alignItems: 'center', gap: S.md,
          paddingHorizontal: S.lg, paddingTop: 58, paddingBottom: S.sm },
-  layer: { color: C.mist, fontSize: 10, fontWeight: '800', letterSpacing: 1.6 },
+  layer: { color: C.mist, fontSize: 10, fontWeight: '800', letterSpacing: 1.4 },
   hudT: { color: C.ink, fontSize: 13, fontWeight: '800' },
   pad: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around',
          paddingHorizontal: S.lg },
@@ -317,6 +459,22 @@ const s = StyleSheet.create({
   outT: { color: C.ink, fontWeight: '800', fontSize: 12.5 },
   bigNum: { color: C.gold, fontSize: 40, fontWeight: '800', marginBottom: S.sm },
   statRow: { flexDirection: 'row', marginTop: S.sm },
-  statN: { color: C.ink, fontSize: 19, fontWeight: '800' },
-  statL: { color: C.mist, fontSize: 9.5, marginTop: 2, textAlign: 'center' },
+  statN: { color: C.ink, fontSize: 18, fontWeight: '800' },
+  statL: { color: C.mist, fontSize: 9, marginTop: 2, textAlign: 'center' },
+
+  tierHead: { flexDirection: 'row', alignItems: 'center', gap: S.sm,
+              marginTop: S.lg, marginBottom: S.xs },
+  tierBar: { width: 3, height: 15, borderRadius: 2 },
+  tierT: { color: C.mist, fontSize: 10.5, fontWeight: '800', letterSpacing: 0.3, flex: 1 },
+
+  lvl: { flexDirection: 'row', alignItems: 'center', gap: S.md, minHeight: 62,
+         paddingVertical: S.sm, paddingHorizontal: S.md, marginTop: 6,
+         borderRadius: R.md, borderWidth: 1, borderColor: C.line },
+  lvlN: { width: 38, height: 38, borderRadius: R.sm, alignItems: 'center', justifyContent: 'center' },
+  lvlNT: { fontSize: 15, fontWeight: '800' },
+  lvlName: { color: C.ink, fontSize: 15, fontWeight: '800' },
+  lvlSub: { color: 'rgba(234,240,255,0.62)', fontSize: 10.5, marginTop: 2 },
+  stars: { color: C.gold, fontSize: 13, letterSpacing: 1 },
+  lvlGo: { color: C.gold, fontSize: 8.5, fontWeight: '800', letterSpacing: 1 },
+  starsBig: { color: C.gold, fontSize: 34, letterSpacing: 4, marginBottom: S.sm },
 });

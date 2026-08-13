@@ -6,6 +6,7 @@ import {
   CARE_TARGET, type Clock, type Jar,
 } from './logic/day';
 import { HABITATS, STAGES, type SpeciesKey } from './theme';
+import { LEVEL_COUNT, starsFor, gemsBanked, xpFor } from './game/levels';
 
 export type { Jar };
 export { CARE_TARGET, wellbeing, wellbeingLabel };
@@ -55,6 +56,10 @@ type Persisted = {
   jobs: Job[]; praise: Praise[]; gifts: Gift[]; circle: Member[];
   compare: boolean; seen: Record<string, boolean>;
   runsToday: number; gemsToday: number; bestClimb: number;
+
+  /** The Long Climb. `unlocked` is the highest level that may be entered;
+   *  `stars` is the best ever earned on each and can only go up. */
+  unlocked: number; stars: Record<string, number>;
 };
 
 const seedJobs = (): Job[] => [
@@ -75,7 +80,7 @@ const seedCircle = (): Member[] => [
 ];
 
 const initial: Persisted = {
-  v: 4,
+  v: 5,
   onboarded: false, kidName: '', age: null, petName: '', species: null,
   gems: 120, xp: 0, bond: 8, streak: 1,
   habitat: 1, reachedSurface: false,
@@ -94,6 +99,7 @@ const initial: Persisted = {
   gifts: [{ id: 'g1', from: 'Grandma Rose', label: 'Birthday gift', amount: 10, state: 'pending' }],
   circle: seedCircle(), compare: false, seen: {},
   runsToday: 0, gemsToday: 0, bestClimb: 0,
+  unlocked: 1, stars: {},
 };
 
 /** What a care action gives back. Every one of these is a gain — there is no
@@ -106,6 +112,14 @@ const CARE_VALUE: Record<CareKind, { bond: number; gems: number }> = {
 };
 
 export type CareResult = { bond: number; xp: number; gems: number; capped: boolean };
+
+export type LevelResult = {
+  escaped: boolean; gems: number; hurt: boolean; climbed: number; par: number;
+};
+export type LevelReward = {
+  gems: number; xp: number; stars: number; best: number;
+  improved: boolean; capped: boolean;
+};
 
 type Actions = {
   sync: (now?: number) => void;
@@ -125,8 +139,8 @@ type Actions = {
   setCompare: (on: boolean) => void;
   setFunLimit: (n: number) => void;
   markSeen: (k: string) => void;
-  startRun: () => boolean;
-  endRun: (gems: number, climbed: number, surfaced: boolean) => { gems: number; xp: number };
+  startLevel: (n: number) => boolean;
+  endLevel: (n: number, o: LevelResult) => LevelReward;
   reset: () => void;
 };
 export type State = Persisted & Actions;
@@ -269,42 +283,70 @@ export const useGame = create<State>()(persist((set, get) => ({
   setFunLimit: n => set({ funLimit: Math.max(0, Math.min(50, n)) }),
   markSeen: k => set({ seen: { ...get().seen, [k]: true } }),
 
-  startRun: () => {
+  /** May this level be entered? Locked levels and the daily ceiling are the
+   *  only two noes, and the ceiling counts escapes, not attempts. */
+  startLevel: n => {
     const st = get();
-    if (st.runsToday >= RUNS_PER_DAY) return false;
-    set({ runsToday: st.runsToday + 1 });
-    return true;
+    if (n < 1 || n > LEVEL_COUNT || n > st.unlocked) return false;
+    return st.runsToday < RUNS_PER_DAY;
   },
-  /** Returns what was actually credited. Hitting the cap never voids a run —
-   *  the child keeps what the cap allows, and always keeps the XP. */
-  endRun: (gems, climbed, surfaced) => {
+
+  /**
+   * Settle a level.
+   *
+   * Escaping banks the treasure, opens the next level and spends one of the
+   * day's five. A hard time in a cave banks half the treasure, costs nothing,
+   * and locks nothing — the child can go straight back in. Stars are the best
+   * ever earned and cannot be lost by replaying.
+   */
+  endLevel: (n, o) => {
     const st = get();
-    const credited = Math.max(0, Math.min(gems, Math.max(0, GEM_CAP - st.gemsToday)));
-    const xp = Math.round(climbed) + (surfaced ? 200 : 0);
+    const raw = gemsBanked(o.gems, o.escaped);
+    const credited = Math.max(0, Math.min(raw, Math.max(0, GEM_CAP - st.gemsToday)));
+    const xp = xpFor(o.climbed, o.escaped);
+    const stars = starsFor({ escaped: o.escaped, gems: o.gems, hurt: o.hurt, par: o.par });
+    const was = st.stars[n] ?? 0;
+    const best = Math.max(was, stars);
+
     set({
       gems: st.gems + credited,
       gemsToday: st.gemsToday + credited,
       xp: st.xp + xp,
-      bestClimb: Math.max(st.bestClimb, climbed),
-      reachedSurface: st.reachedSurface || surfaced,
+      bestClimb: Math.max(st.bestClimb, o.climbed),
+      runsToday: st.runsToday + (o.escaped ? 1 : 0),
+      stars: best !== was ? { ...st.stars, [n]: best } : st.stars,
+      unlocked: o.escaped ? Math.max(st.unlocked, Math.min(LEVEL_COUNT, n + 1)) : st.unlocked,
+      // The last level is the one that gets your Vaultling out of the cave.
+      reachedSurface: st.reachedSurface || (o.escaped && n >= LEVEL_COUNT),
     });
-    return { gems: credited, xp };
+    return { gems: credited, xp, stars, best, improved: best > was, capped: raw > credited };
   },
 
   reset: () => set({ ...initial, jobs: seedJobs(), praise: seedPraise(), circle: seedCircle() }),
 }), {
+  // The storage key is historical and must never change again — renaming it
+  // orphans every existing save, because `migrate` only ever sees data stored
+  // under this exact key. Schema changes go through `version` alone.
   name: 'vaultlings-v4',
   storage: createJSONStorage(() => AsyncStorage),
-  version: 4,
+  version: 5,
   partialize: (s: State) => {
     const {
       sync, setKid, chooseSpecies, finish, care, buyWear, buyDecor, upgradeHabitat,
       spendFun, moveJar, jobDone, approveJob, acceptGift, loveBack, setCompare,
-      setFunLimit, markSeen, startRun, endRun, reset, ...rest
+      setFunLimit, markSeen, startLevel, endLevel, reset, ...rest
     } = s;
     return rest as Persisted;
   },
-  migrate: () => ({ ...initial }) as Persisted,   // v1–v3 had a different economy
+  /**
+   * v4 saves keep everything they earned — money, Bond, habitat, cosmetics —
+   * and simply start the campaign at level 1. There was no campaign to lose.
+   * v1–v3 predate the current economy and are reset.
+   */
+  migrate: (prev: any, from: number) => {
+    if (from === 4 && prev) return { ...initial, ...prev, v: 5, unlocked: 1, stars: {} } as Persisted;
+    return { ...initial } as Persisted;
+  },
   onRehydrateStorage: () => st => {
     if (!st) return;
     // Heal a ledger that collected a duplicate before the guard existed. Money
@@ -342,3 +384,13 @@ export const moodOf = (careCount: number, bondToday: number): 0 | 1 | 2 =>
 
 export const moodLabel = (careCount: number, bondToday: number) =>
   bondToday > 0 ? 'Delighted' : careCount > 0 ? 'Content' : 'Waiting for you';
+
+/* ── the campaign, read back ─────────────────────────────────────────────── */
+
+export const starsTotal = (stars: Record<string, number>) =>
+  Object.values(stars).reduce((a, b) => a + b, 0);
+export const STARS_POSSIBLE = LEVEL_COUNT * 3;
+export const levelsBeaten = (stars: Record<string, number>) =>
+  Object.values(stars).filter(s => s > 0).length;
+/** The one a child taps by default: the furthest level they have opened. */
+export const currentLevel = (unlocked: number) => Math.min(LEVEL_COUNT, unlocked);

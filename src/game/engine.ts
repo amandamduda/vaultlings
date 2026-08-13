@@ -8,6 +8,8 @@
  * lingering in the deep pays better and getting out is the safe play.
  */
 export const COLS = 11, ROWS = 170;
+/** How far up you have to get before daylight. */
+export const SURFACE_ROW = 2;
 export const EMPTY=0, DIRT=1, ROCK=2, GEM=3, BIGGEM=4, HARD=5;
 
 export type Layer = {
@@ -34,40 +36,91 @@ export type GameState = {
   grid: Uint8Array; hidden: Uint8Array;
   px:number; py:number; dx:number; dy:number;
   gems:number; hp:number; blasts:number; climb:number;
+  /** the row you were dropped at — climb is measured from here */
+  start:number;
+  /** how much treasure exists in the slab you have to climb through */
+  gemsInWorld:number;
+  snatchMax:number; snatchMul:number;
   snatchers: Snatcher[]; over:boolean; won:boolean;
 };
 
 const idx = (c:number,r:number)=> r*COLS+c;
 const inb = (c:number,r:number)=> c>=0 && c<COLS && r>=0 && r<ROWS;
 
-export function newGame(streak:number, rnd:()=>number = Math.random): GameState {
+/**
+ * A level's recipe.
+ *
+ * The computer places every tile, but only inside these rules. That is what
+ * lets a generated level still teach something: level 3 sets `rockMul` to zero
+ * and there is not a boulder in the world, so a child can learn to dig before
+ * anything can fall on them.
+ *
+ * The multipliers scale each stratum's own numbers rather than replacing them,
+ * so the deep still feels richer and meaner than the shallows *within* a level
+ * while the recipe controls the level as a whole.
+ */
+export type WorldOpts = {
+  /** how far down you are dropped; the climb home is this many rows */
+  start:number;
+  rockMul:number; sparkMul:number; hard:number;
+  snatchMax:number; snatchMul:number;
+  hearts:number; blasts:number;
+};
+
+export function newWorld(o:WorldOpts, rnd:()=>number = Math.random): GameState {
   const grid = new Uint8Array(COLS*ROWS), hidden = new Uint8Array(COLS*ROWS).fill(1);
+  const start = Math.max(SURFACE_ROW+3, Math.min(ROWS-2, Math.round(o.start)));
   for(let r=0;r<ROWS;r++){
     const L = layerAt(r);
+    const rock = L.rock * o.rockMul, spark = L.spark * o.sparkMul;
     for(let c=0;c<COLS;c++){
       let t:number = DIRT;
       if(r>2){
         const q = rnd();
-        if(q < L.rock) t = ROCK;
-        else if(q < L.rock + L.spark*0.22) t = BIGGEM;
-        else if(q < L.rock + L.spark) t = GEM;
+        if(q < rock) t = ROCK;
+        else if(q < rock + spark*0.22) t = BIGGEM;
+        else if(q < rock + spark) t = GEM;
       }
-      if(r>4 && rnd()<0.02) t = HARD;
+      if(r>4 && rnd()<o.hard) t = HARD;
       grid[idx(c,r)] = t;
     }
   }
-  // you start at the bottom of the world, in a small pocket of cleared rock
-  for(let r=ROWS-3;r<ROWS;r++) for(let c=0;c<COLS;c++){ grid[idx(c,r)]=EMPTY; hidden[idx(c,r)]=0; }
-  return { grid, hidden, px:COLS>>1, py:ROWS-2, dx:0, dy:0,
-           gems:0, hp:3, blasts:Math.max(1,Math.min(5,Math.floor(streak/4))),
-           climb:0, snatchers:[], over:false, won:false };
+  // A small pocket of cleared rock to stand in.
+  for(let r=start-1;r<=Math.min(ROWS-1,start+1);r++)
+    for(let c=0;c<COLS;c++){ grid[idx(c,r)]=EMPTY; hidden[idx(c,r)]=0; }
+  // The pocket's ceiling must not be holding boulders. Carving a full-width
+  // pocket leaves every rock in the row above unsupported, and they avalanche
+  // onto the child on the first tick — before they have touched the screen.
+  // Turning that one row to earth makes the landing safe and is invisible.
+  if(start-2 >= 0) for(let c=0;c<COLS;c++){
+    const i = idx(c,start-2);
+    if(grid[i]===ROCK) grid[i]=DIRT;
+  }
+
+  // Count the treasure between here and daylight. Gem par is a fraction of
+  // this, so a level can never ship with a target that is not in the ground.
+  let gemsInWorld = 0;
+  for(let r=SURFACE_ROW;r<=start;r++) for(let c=0;c<COLS;c++){
+    const t = grid[idx(c,r)];
+    if(t===GEM) gemsInWorld += 1; else if(t===BIGGEM) gemsInWorld += 5;
+  }
+
+  return { grid, hidden, px:COLS>>1, py:start, dx:0, dy:0,
+           gems:0, hp:Math.max(1,o.hearts), blasts:Math.max(0,o.blasts),
+           climb:0, start, gemsInWorld,
+           snatchMax:o.snatchMax, snatchMul:o.snatchMul,
+           snatchers:[], over:false, won:false };
 }
+
+/** The old endless run: the whole world, every mechanic on. Kept because the
+ *  verifier leans on it as the hardest possible case. */
+export const newGame = (streak:number, rnd:()=>number = Math.random): GameState =>
+  newWorld({ start:ROWS-2, rockMul:1, sparkMul:1, hard:0.02,
+             snatchMax:4, snatchMul:1, hearts:3,
+             blasts:Math.max(1,Math.min(5,Math.floor(streak/4))) }, rnd);
 
 /** Returns events so the renderer can spawn particles / haptics without owning logic. */
 export type Ev = { kind:'gem'|'biggem'|'hurt'|'blast'|'win'; c?:number; r?:number };
-
-/** How far above the start you have to get before daylight. */
-export const SURFACE_ROW = 2;
 
 export function move(g:GameState, dc:number, dr:number): Ev[] {
   const ev:Ev[] = [];
@@ -87,9 +140,9 @@ export function move(g:GameState, dc:number, dr:number): Ev[] {
   }
   g.grid[idx(nc,nr)]=EMPTY; g.hidden[idx(nc,nr)]=0;
   g.px=nc; g.py=nr;
-  // climb is measured from where you started, so it only ever goes up
-  g.climb = Math.max(g.climb, (ROWS-2) - nr);
-  if(nr<=2){ g.over=true; g.won=true; ev.push({kind:'win'}); }   // daylight
+  // climb is measured from where you were dropped, so it only ever goes up
+  g.climb = Math.max(g.climb, g.start - nr);
+  if(nr<=SURFACE_ROW){ g.over=true; g.won=true; ev.push({kind:'win'}); }   // daylight
   return ev;
 }
 
@@ -126,8 +179,9 @@ export function stepSnatchers(g:GameState, rnd:()=>number = Math.random): Ev[] {
 }
 
 export function trySpawn(g:GameState, rnd:()=>number = Math.random){
+  if(g.snatchMax <= 0) return;                       // this level has none
   const L = layerAt(g.py);
-  if(rnd() > L.snatch || g.snatchers.length >= 4) return;
+  if(rnd() > L.snatch * g.snatchMul || g.snatchers.length >= g.snatchMax) return;
   for(let a=0;a<26;a++){
     const r = g.py - 4 - Math.floor(rnd()*10), c = Math.floor(rnd()*COLS);
     if(inb(c,r) && g.grid[idx(c,r)]===EMPTY){ g.snatchers.push({c,r}); return; }
