@@ -7,7 +7,9 @@
     "ios": "expo run:ios",
     "android": "expo run:android",
     "prebuild": "expo prebuild --clean",
-    "tsc": "tsc --noEmit"
+    "tsc": "tsc --noEmit",
+    "verify": "node scripts/verify-rules.mjs",
+    "preflight": "npm run tsc && npm run verify"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "~2.2.0",
