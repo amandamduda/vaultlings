@@ -11,10 +11,13 @@ import Animated, {
 } from 'react-native-reanimated';
 import { den as denArt } from '../art';
 import {
-  C, S, R, HIT, SPECIES, DWELLINGS, AREAS, STATIONS, DEN_ASPECT,
+  C, S, R, HIT, SPECIES, HABITATS, AREAS, STATIONS, DEN_ASPECT,
   NEST, HOME_STATION, money, type AreaKey, type SpeciesKey,
 } from '../theme';
-import { useGame, moodOf, moodLabel, jarTotal, FEED_COST } from '../store';
+import {
+  useGame, moodOf, moodLabel, jarTotal, stageOf, levelProgress,
+  wellbeing, wellbeingLabel, CARE_TARGET, SNACK_COST, BOND_CAP,
+} from '../store';
 import Creature, { Particles, FloatText, FRAME_RATIO, type CreatureHandle, type ActKind } from '../Creature';
 import { buzz, nope, st } from '../ui';
 
@@ -35,7 +38,7 @@ const TILT_TIP = 9;
 type CareKind = Extract<ActKind, 'feed' | 'pet' | 'wash' | 'toy'>;
 type CareDef = { k: CareKind; icon: string; label: string; cost?: number };
 const CARE: CareDef[] = [
-  { k: 'feed', icon: '🍎', label: 'Feed', cost: FEED_COST },
+  { k: 'feed', icon: '🍎', label: 'Feed', cost: SNACK_COST },
   { k: 'pet',  icon: '🤚', label: 'Pet' },
   { k: 'wash', icon: '🫧', label: 'Wash' },
   { k: 'toy',  icon: '🪀', label: 'Play' },
@@ -47,7 +50,9 @@ export default function Den({ onEnter, initialStation = HOME_STATION }: {
   const g = useGame();
   const species = (g.species ?? 'orin') as SpeciesKey;
   const sp = SPECIES[species];
-  const dw = DWELLINGS[Math.max(0, Math.min(DWELLINGS.length - 1, g.dwelling))];
+  const hab = HABITATS[Math.max(0, Math.min(HABITATS.length - 1, g.habitat))];
+  const stage = stageOf(g.bond, g.reachedSurface);
+  const lvl = levelProgress(g.xp);
 
   const panoW = Math.round(PAN_H * DEN_ASPECT[species]);
   const maxScroll = Math.max(0, panoW - W);
@@ -107,14 +112,16 @@ export default function Den({ onEnter, initialStation = HOME_STATION }: {
 
   // ── care ─────────────────────────────────────────────────────────────────
   const doCare = (c: CareDef) => {
-    const gained = g.care(c.k);
-    if (gained == null) { nope(); return; }
+    const r = g.care(c.k);
+    if (r == null) { nope(); return; }          // only ever: not enough gems
     buzz();
     creature.current?.play(c.k);
     setFx(f => ({
       seq: f.seq + 1, kind: c.k,
-      text: c.k === 'feed' ? `+${gained} Full  −${FEED_COST}◆` : `+${gained} Happy`,
-      color: c.k === 'feed' ? C.money : C.heart,
+      // Bond is capped daily so stages take months. Hitting the cap still counts
+      // the visit — the child is told they are done for today, not refused.
+      text: r.capped && r.bond === 0 ? 'Happy to see you' : `+${r.bond} Bond`,
+      color: C.heart,
     }));
     if (station !== HOME_STATION) goStation(HOME_STATION);
   };
@@ -135,8 +142,8 @@ export default function Den({ onEnter, initialStation = HOME_STATION }: {
     if (best !== station) { buzz(); setStation(best); }
   };
 
-  const mood = moodOf(g.happy, g.full);
-  const canFeed = g.gems >= FEED_COST;
+  const mood = moodOf(g.careCount, g.bondToday);
+  const canFeed = g.gems >= SNACK_COST;
 
   return (
     <View style={s.wrap}>
@@ -156,11 +163,11 @@ export default function Den({ onEnter, initialStation = HOME_STATION }: {
           <Image source={denArt(species)}
             style={{ width: panoW, height: PAN_H, resizeMode: 'cover' }} />
 
-          {/* how bright the home is — the ten dwellings, as light rather than art */}
+          {/* how bright the home is — the ten habitats, as light rather than art */}
           <View pointerEvents="none" style={[StyleSheet.absoluteFill, {
-            backgroundColor: '#050A16', opacity: 0.40 - (g.dwelling / 9) * 0.40 }]} />
+            backgroundColor: '#050A16', opacity: 0.40 - (g.habitat / 9) * 0.40 }]} />
           <View pointerEvents="none" style={[StyleSheet.absoluteFill, {
-            backgroundColor: dw.glow, opacity: 0.03 + (g.dwelling / 9) * 0.13 }]} />
+            backgroundColor: hab.glow, opacity: 0.03 + (g.habitat / 9) * 0.13 }]} />
 
           {/* the Vaultling, on its nest */}
           <Animated.View pointerEvents="none" style={[{
@@ -190,7 +197,7 @@ export default function Den({ onEnter, initialStation = HOME_STATION }: {
         <View style={s.hudTop}>
           <View style={{ flex: 1 }}>
             <Text style={s.petName} numberOfLines={1}>{g.petName || sp.n}</Text>
-            <Text style={s.petSub}>{moodLabel(g.happy, g.full)} · {dw.n}</Text>
+            <Text style={s.petSub}>{stage.n} · {moodLabel(g.careCount, g.bondToday)}</Text>
           </View>
           <View style={s.gemChip}><Text style={s.gemT}>◆ {g.gems}</Text></View>
           <View style={[s.gemChip, { backgroundColor: 'rgba(143,227,176,0.16)' }]}>
@@ -198,8 +205,11 @@ export default function Den({ onEnter, initialStation = HOME_STATION }: {
           </View>
         </View>
         <View style={s.meters}>
-          <Meter label="Happy" v={g.happy} color={C.heart} />
-          <Meter label="Full" v={g.full} color={C.money} />
+          {/* Bond only ever rises, and it cannot be bought. Wellbeing counts the
+              week, not the hour — a quiet Tuesday takes nothing away. */}
+          <Meter label={`Bond ${g.bond}`} pct={Math.min(1, g.bond / 320)} color={C.heart} />
+          <Meter label={wellbeingLabel(g.careCount)} pct={wellbeing(g.careCount)} color={C.teal} />
+          <Meter label={`Lvl ${lvl.level}`} pct={lvl.pct} color={C.gold} />
         </View>
       </View>
 
@@ -280,16 +290,13 @@ function Chevron({ dir, onPress }: { dir: 'left' | 'right'; onPress: () => void 
   );
 }
 
-function Meter({ label, v, color }: { label: string; v: number; color: string }) {
-  const w = useSharedValue(v);
-  useEffect(() => { w.value = withSpring(v, { damping: 16, stiffness: 120 }); }, [v]);
-  const fill = useAnimatedStyle(() => ({ width: `${Math.max(0, Math.min(100, w.value))}%` }));
+function Meter({ label, pct, color }: { label: string; pct: number; color: string }) {
+  const w = useSharedValue(pct);
+  useEffect(() => { w.value = withSpring(pct, { damping: 16, stiffness: 120 }); }, [pct]);
+  const fill = useAnimatedStyle(() => ({ width: `${Math.max(0, Math.min(100, w.value * 100))}%` }));
   return (
-    <View style={{ flex: 1 }} accessibilityLabel={`${label} ${Math.round(v)} of 100`}>
-      <View style={s.meterTop}>
-        <Text style={s.meterL}>{label}</Text>
-        <Text style={[s.meterV, { color }]}>{Math.round(v)}</Text>
-      </View>
+    <View style={{ flex: 1 }} accessibilityLabel={label}>
+      <Text style={s.meterL} numberOfLines={1}>{label}</Text>
       <View style={s.meterBed}>
         <Animated.View style={[s.meterFill, { backgroundColor: color }, fill]} />
       </View>
@@ -311,9 +318,10 @@ const s = StyleSheet.create({
              paddingHorizontal: 11, paddingVertical: 6,
              borderWidth: 1, borderColor: 'rgba(255,201,77,0.30)' },
   gemT: { color: C.gold, fontWeight: '800', fontSize: 12.5 },
-  meters: { flexDirection: 'row', gap: S.md, marginTop: S.md },
+  meters: { flexDirection: 'row', gap: S.sm, marginTop: S.md },
   meterTop: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 },
-  meterL: { color: C.mist, fontSize: 9.5, fontWeight: '800', letterSpacing: 1.2 },
+  meterL: { color: C.ink, fontSize: 9.5, fontWeight: '800', letterSpacing: 0.6, marginBottom: 3,
+            textShadowColor: '#000', textShadowRadius: 6 },
   meterV: { fontSize: 10.5, fontWeight: '800' },
   meterBed: { height: 7, borderRadius: R.pill, backgroundColor: 'rgba(4,8,20,0.72)',
               overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(160,180,220,0.18)' },

@@ -31,7 +31,9 @@ const ACT: Record<ActKind, { frame: PoseName; ms: number }> = {
 
 type Props = {
   species: SpeciesKey;
-  /** 0 drooping · 1 content · 2 delighted — picks the resting frame */
+  /** 0 asleep · 1 content · 2 delighted — picks the resting frame.
+   *  Zero means nobody has been by yet this week, so the Vaultling is asleep.
+   *  It is never sad, hungry or neglected: absence is not punished here. */
   mood: number;
   width: number;
   style?: ImageStyle;
@@ -56,13 +58,13 @@ const Creature = forwardRef<CreatureHandle, Props>(function Creature(
   const rot = useSharedValue(0);
   const tx = useSharedValue(0);
 
-  const restFrame: PoseName = mood === 0 ? 'hungry' : 'idle';
+  const restFrame: PoseName = mood === 0 ? 'sleep' : mood === 2 ? 'happy' : 'idle';
 
   // the resting bob — slower and lower when the creature is unhappy
   const startIdle = () => {
     cancelAnimation(ty);
-    const amp = mood === 0 ? -4 : -9;
-    const dur = mood === 0 ? 2700 : 1800;
+    const amp = mood === 0 ? -3 : -9;      // sleeping breathes, awake bobs
+    const dur = mood === 0 ? 3200 : 1800;
     ty.value = withRepeat(
       withSequence(
         withTiming(amp, { duration: dur, easing: Easing.inOut(Easing.quad) }),

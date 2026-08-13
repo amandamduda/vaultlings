@@ -2,9 +2,9 @@ import React, { useState } from 'react';
 import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
 import { ART } from '../art';
 import {
-  C, S, R, DWELLINGS, WEAR, DECOR, REAL, SPECIES, money, type SpeciesKey,
+  C, S, R, HABITATS, WEAR, DECOR, REAL, REAL_LIVE, STAGES, money, type SpeciesKey,
 } from '../theme';
-import { useGame, jarTotal, split, type Jar } from '../store';
+import { useGame, jarTotal, split, stageOf, levelProgress, type Jar } from '../store';
 import { Screen, Card, Row, Btn, Stepper, Switch, ParentGate, st, buzz, ok, nope, type GateReq } from '../ui';
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -15,29 +15,32 @@ import { Screen, Card, Row, Btn, Stepper, Switch, ParentGate, st, buzz, ok, nope
  * dollars around underneath it.
  * ══════════════════════════════════════════════════════════════════════════ */
 
+/** The three buckets from the economy spec. Keeping all three visible is the
+ *  point: the child sees a tradeoff rather than one opaque balance. */
 const JARS: { k: Jar; n: string; e: string; blurb: string; color: string }[] = [
-  { k: 'care', n: 'Care',  e: '💚', blurb: 'Food and looking after your Vaultling', color: C.money },
-  { k: 'fun',  n: 'Fun',   e: '🎈', blurb: 'Treats, toys, whatever you like',        color: C.heart },
-  { k: 'grow', n: 'Grow',  e: '🌱', blurb: 'Goes to the Deep Vault and stays there', color: C.teal },
+  { k: 'save', n: 'Savings', e: '🏦', blurb: 'Money that stays put', color: C.teal },
+  { k: 'goal', n: 'Goals',   e: '🎯', blurb: 'Money going toward the thing you want', color: C.money },
+  { k: 'fun',  n: 'Fun',     e: '🎈', blurb: 'Yours to spend, up to this week\'s limit', color: C.heart },
 ];
 
+/** Fun spending. Small, real, and capped weekly by a grown-up. */
 const TREATS = [
-  { n: 'Sky Berries', e: '🫐', cost: 2, jar: 'care' as Jar, note: '+18 Full' },
-  { n: 'Tater tots',  e: '🥔', cost: 1, jar: 'care' as Jar, note: '+8 Full · +4 Happy' },
-  { n: 'Sticker pack', e: '✨', cost: 1, jar: 'fun'  as Jar, note: 'Just because' },
+  { n: 'Sticker pack', e: '✨', cost: 1 },
+  { n: 'Comic',        e: '📚', cost: 2 },
+  { n: 'Ice cream',    e: '🍦', cost: 3 },
 ];
 
 export function Jars({ onBack }: { onBack: () => void }) {
   const g = useGame();
   const [from, setFrom] = useState<Jar>('fun');
-  const [to, setTo] = useState<Jar>('grow');
+  const [to, setTo] = useState<Jar>('save');
   const [amt, setAmt] = useState(0.5);
-  const [save, setSave] = useState(0.5);
   const total = jarTotal(g.jars);
-  const goalPct = Math.min(100, (g.savings / g.goal.target) * 100);
+  const goalPct = Math.min(100, (g.jars.goal / g.goal.target) * 100);
+  const funLeft = Math.max(0, g.funLimit - g.funSpentWeek);
 
   return (
-    <Screen title="My Jars" sub={`${money(total)} split across three jars — plus ${money(g.savings)} locked away`} onBack={onBack}>
+    <Screen title="My Money" sub={`${money(total)} in three buckets. Nothing here is game money.`} onBack={onBack}>
       <View style={s.jarRow}>
         {JARS.map(j => (
           <View key={j.k} style={s.jar}>
@@ -66,29 +69,34 @@ export function Jars({ onBack }: { onBack: () => void }) {
         </View>
       </Card>
 
-      <Card title="The Deep Vault">
-        <Row left={g.goal.emoji + '  ' + g.goal.label} sub={`${money(g.savings)} of ${money(g.goal.target)}`}
-          right={<Text style={[s.pct, { color: C.teal }]}>{Math.round(goalPct)}%</Text>} />
-        <View style={s.bed}><View style={[s.fill, { width: `${goalPct}%`, backgroundColor: C.teal }]} /></View>
+      <Card title="What you are saving for">
+        <Row left={g.goal.emoji + '  ' + g.goal.label} sub={`${money(g.jars.goal)} of ${money(g.goal.target)}`}
+          right={<Text style={[s.pct, { color: C.money }]}>{Math.round(goalPct)}%</Text>} />
+        <View style={s.bed}><View style={[s.fill, { width: `${goalPct}%`, backgroundColor: C.money }]} /></View>
         <Text style={st.note}>
-          Money in the Deep Vault cannot be spent in the app. It is yours in real life — a grown-up
-          moves it for you when you get there.
+          Every time you move money into Goals this bar gets longer. It is real money, kept for you in
+          real life — a grown-up hands it over when you get there.
         </Text>
-        <View style={{ alignItems: 'center', marginTop: S.md }}>
-          <Stepper value={save} max={g.jars.grow} onChange={setSave} />
-        </View>
-        <View style={{ marginTop: S.md }}>
-          <Btn label={`Lock away ${money(save)}`} tone="teal" wide disabled={save <= 0 || g.jars.grow < save}
-            onPress={() => { g.toSavings(save) ? ok() : nope(); setSave(0); }} />
-        </View>
       </Card>
 
-      <Card title="Spend a little">
-        {TREATS.map(t => (
-          <Row key={t.n} left={`${t.e}  ${t.n}`} sub={`${money(t.cost)} from ${t.jar} · ${t.note}`}
-            right={<Btn label={money(t.cost)} disabled={g.jars[t.jar] < t.cost}
-              onPress={() => { g.spend(t.jar, t.cost, t.n) ? ok() : nope(); }} />} />
-        ))}
+      <Card title="Fun spending">
+        <Text style={st.body}>
+          You have {money(funLeft)} of Fun left this week. A grown-up set that limit, and it starts
+          again every Monday.
+        </Text>
+        {TREATS.map(t => {
+          const blocked = g.jars.fun < t.cost || funLeft < t.cost;
+          return (
+            <Row key={t.n} left={`${t.e}  ${t.n}`}
+              sub={funLeft < t.cost ? 'Over this week\'s Fun limit' : `${money(t.cost)} from Fun`}
+              right={<Btn label={money(t.cost)} disabled={blocked}
+                onPress={() => { g.spendFun(t.cost, t.n) ? ok() : nope(); }} />} />
+          );
+        })}
+        <Text style={st.note}>
+          Spending Fun money is allowed and normal. It is the only bucket you can spend from, and it
+          is meant to run out sometimes.
+        </Text>
       </Card>
 
       <Card title="What happened">
@@ -132,16 +140,38 @@ export function Market({ onBack }: { onBack: () => void }) {
   const g = useGame();
   const [gate, setGate] = useState<GateReq>(null);
   const species = (g.species ?? 'orin') as SpeciesKey;
-  const next = DWELLINGS[g.dwelling + 1];
+  const next = HABITATS[g.habitat + 1];
+  const stage = stageOf(g.bond, g.reachedSurface);
+  const lvl = levelProgress(g.xp);
 
   return (
     <>
-      <Screen title="The Market" sub={`◆ ${g.gems} gems · ${money(jarTotal(g.jars))} real money`} onBack={onBack}>
+      <Screen title="The Market" sub={`◆ ${g.gems} gems earned · everything here is bought with gems`} onBack={onBack}>
+
+        <Card title="Your Vaultling">
+          {/* Creature progression is the long game — months, not sittings — so it
+              needs somewhere the child can see it moving. */}
+          <Row left={`${stage.n} · ${g.petName || 'your Vaultling'}`} sub={stage.blurb}
+            right={<Text style={[s.amt, { color: C.heart }]}>❤️ {g.bond}</Text>} />
+          <View style={s.ladder}>
+            {STAGES.map((t, i) => (
+              <View key={t.k} style={[s.rung, {
+                backgroundColor: STAGES.indexOf(stage) >= i ? C.heart : 'rgba(255,255,255,0.10)' }]} />
+            ))}
+          </View>
+          <Row left={`Level ${lvl.level}`} sub={`${lvl.into} of ${lvl.need} XP to the next one`}
+            right={<Text style={[s.amt, { color: C.gold }]}>⭐ {g.xp}</Text>} />
+          <Text style={st.note}>
+            Bond grows a little each day, however much you play — that is why becoming an Elder takes
+            months. It cannot be bought, and it never goes down. The last stage is not on this ladder:
+            your Vaultling earns it by reaching the surface.
+          </Text>
+        </Card>
 
         <Card title="Your home">
           <Image source={ART[`den-${species}` as 'den-orin']}
             style={{ width: '100%', height: 84, borderRadius: R.md, resizeMode: 'cover' }} />
-          <Row left={DWELLINGS[g.dwelling].n} sub={DWELLINGS[g.dwelling].blurb} />
+          <Row left={HABITATS[g.habitat].n} sub={HABITATS[g.habitat].blurb} />
           {next ? (
             <>
               <Row left={`Next: ${next.n}`} sub={next.blurb}
@@ -149,15 +179,15 @@ export function Market({ onBack }: { onBack: () => void }) {
               <View style={{ marginTop: S.sm }}>
                 <Btn label={g.gems >= next.cost ? `Move up to ${next.n}` : `Need ◆${next.cost - g.gems} more`}
                   wide disabled={g.gems < next.cost}
-                  onPress={() => { g.upgradeHome() ? ok() : nope(); }} />
+                  onPress={() => { g.upgradeHabitat() ? ok() : nope(); }} />
               </View>
             </>
           ) : (
-            <Text style={st.body}>Sunspire. There is nowhere higher to go.</Text>
+            <Text style={st.body}>Sunspire. There is nowhere higher to go — the next step is the sky.</Text>
           )}
           <View style={s.ladder}>
-            {DWELLINGS.map((d, i) => (
-              <View key={d.n} style={[s.rung, { backgroundColor: i <= g.dwelling ? d.glow : 'rgba(255,255,255,0.10)' }]} />
+            {HABITATS.map((d, i) => (
+              <View key={d.n} style={[s.rung, { backgroundColor: i <= g.habitat ? d.glow : 'rgba(255,255,255,0.10)' }]} />
             ))}
           </View>
         </Card>
@@ -180,22 +210,28 @@ export function Market({ onBack }: { onBack: () => void }) {
           ))}
         </View>
 
-        <Text style={st.aisle}>$  Real money · asks a grown-up</Text>
+        <Text style={st.aisle}>$  Real money · preview only</Text>
         <Card>
           <Text style={st.body}>
-            These cost real money from a card, not from your jars and not with gems. A grown-up has
-            to say yes every single time.
+            {REAL_LIVE
+              ? 'These cost real money and need a grown-up every single time.'
+              : 'These are a preview of what optional paid cosmetics might look like one day. Nothing '
+              + 'here charges anything, and nothing here is for sale yet.'}
           </Text>
           {REAL.map(r => (
-            <Row key={r.n} left={`${r.e}  ${r.n}`} sub="Looks only — changes nothing in the game"
+            <Row key={r.n} left={`${r.e}  ${r.n}`} sub="Looks only — would change nothing in the game"
               right={<Btn label={r.p} tone="ghost"
                 onPress={() => setGate({
-                  title: `Buy ${r.n}?`,
-                  detail: `${r.p} from the card on file. This is a look, not an advantage.`,
+                  title: `${r.n} — not for sale yet`,
+                  detail: 'Real-money items are switched off while the money side is being built. '
+                        + 'Nothing has been charged and no card is on file.',
                   run: () => {},
                 })} />} />
           ))}
-          <Text style={st.warn}>Nothing here can be bought with your jars, and gems can never be bought.</Text>
+          <Text style={st.warn}>
+            Gems can never be bought with money, and money can never be bought with gems. Nothing in
+            the game needs either to progress.
+          </Text>
         </Card>
       </Screen>
       <ParentGate req={gate} onClose={() => setGate(null)} />
@@ -239,12 +275,13 @@ export function Family({ onBack }: { onBack: () => void }) {
   const g = useGame();
   const [gate, setGate] = useState<GateReq>(null);
   const open = g.jobs.filter(j => j.state !== 'paid');
+  const prompt = conversationPrompt(g);
 
   return (
     <>
       <Screen title="Family" sub="Jobs, gifts and the people cheering you on" onBack={onBack}>
 
-        <Card title="Jobs a grown-up set">
+        <Card title="Quests a grown-up set">
           {open.length === 0 && <Text style={st.body}>Every job is done and paid. Nice week.</Text>}
           {open.map(j => (
             <Row key={j.id} left={j.label}
@@ -254,12 +291,12 @@ export function Family({ onBack }: { onBack: () => void }) {
                 : <Btn label="Approve" tone="teal"
                     onPress={() => setGate({
                       title: `Approve "${j.label}"?`,
-                      detail: `${money(j.pay)} goes straight into the jars: ${money(split(j.pay).care)} Care, ${money(split(j.pay).fun)} Fun, ${money(split(j.pay).grow)} Grow.`,
+                      detail: `${money(j.pay)} splits into the buckets: ${money(split(j.pay).save)} Savings, ${money(split(j.pay).goal)} Goals, ${money(split(j.pay).fun)} Fun.`,
                       run: () => { g.approveJob(j.id); },
                     })} />} />
           ))}
           <Text style={st.note}>
-            Saying you did a job does not pay you. A grown-up has to agree — that is the whole point.
+            Saying you did a quest does not pay you. A grown-up has to agree — that is the whole point.
           </Text>
         </Card>
 
@@ -267,7 +304,7 @@ export function Family({ onBack }: { onBack: () => void }) {
           <Card title="Something arrived">
             {g.gifts.filter(x => x.state === 'pending').map(gift => (
               <Row key={gift.id} left={`${gift.label} from ${gift.from}`}
-                sub={`${money(gift.amount)} · splits ${money(split(gift.amount).care)} / ${money(split(gift.amount).fun)} / ${money(split(gift.amount).grow)}`}
+                sub={`${money(gift.amount)} · splits ${money(split(gift.amount).save)} / ${money(split(gift.amount).goal)} / ${money(split(gift.amount).fun)}`}
                 right={<Btn label="Open it" onPress={() => { g.acceptGift(gift.id) ? ok() : nope(); }} />} />
             ))}
           </Card>
@@ -279,7 +316,14 @@ export function Family({ onBack }: { onBack: () => void }) {
               right={<Btn label={p.loved ? '💛' : 'Love back'} tone={p.loved ? 'ghost' : 'gold'}
                 disabled={p.loved} onPress={() => { g.loveBack(p.id) ? ok() : nope(); }} />} />
           ))}
-          <Text style={st.note}>Answering someone earns ◆2, once each.</Text>
+          <Text style={st.note}>Answering someone earns ◆15, once each.</Text>
+        </Card>
+
+        <Card title="For a grown-up">
+          <Text style={st.body}>{prompt}</Text>
+          <Text style={st.note}>
+            One thing worth talking about this week. Not a report card — a conversation starter.
+          </Text>
         </Card>
 
         <Card title="Your circle">
@@ -325,3 +369,23 @@ const s = StyleSheet.create({
   tileP: { color: C.mist, fontSize: 8.5, lineHeight: 11, textAlign: 'center', marginTop: 2 },
   tileC: { fontSize: 11, fontWeight: '800', marginTop: 4 },
 });
+
+
+/**
+ * A prompt for the grown-up.
+ *
+ * From the parent doc: raise these when there is something worth talking about,
+ * never because the child 'failed'. Every branch below is either a celebration
+ * or a neutral observation — none of them is a complaint.
+ */
+function conversationPrompt(g: ReturnType<typeof useGame.getState>): string {
+  const total = jarTotal(g.jars);
+  const goalPct = g.goal.target ? g.jars.goal / g.goal.target : 0;
+  if (goalPct >= 1) return `They reached their ${g.goal.label} goal. Celebrate it, and ask what they want to work toward next.`;
+  if (g.funSpentWeek >= g.funLimit && g.funLimit > 0) return 'They spent all of their Fun money this week. Ask how they feel about what they chose.';
+  if (goalPct >= 0.5) return `They are over halfway to ${g.goal.label}. Ask what they are picturing when they get there.`;
+  if (g.careCount >= 5) return `They have looked after ${g.petName || 'their Vaultling'} every day this week. Ask what it has learned to do.`;
+  if (g.jars.save > total * 0.5) return 'Most of their money is sitting in Savings. Ask what they are keeping it for.';
+  if (g.streak >= 7) return `${g.streak} days in a row. Ask them to show you how far they have climbed.`;
+  return 'Ask what they are saving for, and why that one.';
+}

@@ -23,46 +23,54 @@ const TICK = 460;
 export default function Dig({ onBack }: { onBack: () => void }) {
   const g = useGame();
   const [playing, setPlaying] = useState(false);
-  const [result, setResult] = useState<{ gems: number; credited: number; won: boolean } | null>(null);
+  const [result, setResult] = useState<
+    { gems: number; credited: number; xp: number; climbed: number; won: boolean } | null>(null);
   const left = RUNS_PER_DAY - g.runsToday;
 
   if (playing) {
     return (
       <Board
         streak={g.streak} lantern={!!g.worn.lamp} helm={!!g.worn.helm}
-        onQuit={(gems, won) => {
-          const credited = g.endRun(gems);
+        onQuit={(gems, climbed, won) => {
+          const r = g.endRun(gems, climbed, won);
           setPlaying(false);
-          setResult({ gems, credited, won });
-          credited > 0 ? ok() : nope();
+          setResult({ gems, credited: r.gems, xp: r.xp, climbed, won });
+          ok();
         }} />
     );
   }
 
   return (
-    <Screen title="The Dig" sub="Down through six strata. Bring gems back up." onBack={onBack}>
+    <Screen title="Expedition" sub="You start at the bottom. Dig upward, and get out." onBack={onBack}>
       {result && (
-        <Card title={result.won ? 'You reached the Sovereign Vein' : 'Back to the surface'}>
+        <Card title={result.won ? 'Daylight' : `You climbed ${result.climbed}m`}>
           <Text style={s.bigNum}>◆ {result.credited}</Text>
           <Text style={st.body}>
-            {result.credited < result.gems
-              ? `You dug up ◆${result.gems}, but the cap for today is ◆${GEM_CAP}. The rest stays in the ground.`
-              : result.won
-                ? 'All the way down. Nobody does that on their first try.'
-                : 'Everything you carried is banked. Nothing is lost by stopping.'}
+            {result.won
+              ? 'You broke through to the surface. Your Vaultling saw the sky.'
+              : result.credited < result.gems
+                ? `You found ◆${result.gems}, but today's cap is ◆${GEM_CAP}. The rest stays in the rock.`
+                : 'Everything you carried is banked. Nothing is lost by turning back.'}
           </Text>
+          <Text style={st.note}>+{result.xp} XP</Text>
         </Card>
       )}
 
       <Card title="How it works">
         <Text style={st.body}>
-          Dig down with the arrows. Gems are worth ◆1, big gems ◆5. Rocks fall if you dig underneath
-          them, and something down there wants what you are carrying. Three hearts, then you are out —
-          but you keep every gem you found.
+          You start at the very bottom. Dig upward with the arrows and climb out through the strata:
+          The Deep, Crystal Depths, Ember Reach, Tide Hollow, Verdant Root, then daylight. Gems are
+          worth ◆1, big gems ◆5. Rocks fall when you undercut them, and something down there wants
+          what you are carrying.
+        </Text>
+        <Text style={st.body}>
+          Three hearts and then you are out — but you keep every gem you found. Turning back early is
+          always allowed and always pays.
         </Text>
         <Text style={st.note}>
-          Gems buy hats, furniture and better rooms. They can never be bought with money, and money
-          can never be bought with them.
+          The deepest rock is the richest and the most dangerous, so staying low pays better and
+          climbing is the safe play. Gems buy cosmetics, decorations and better homes. They can never
+          be bought with money, and money can never be bought with them.
         </Text>
       </Card>
 
@@ -71,7 +79,7 @@ export default function Dig({ onBack }: { onBack: () => void }) {
           <Stat n={String(left)} l={`run${left === 1 ? '' : 's'} left`} />
           <Stat n={`◆${g.gemsToday}`} l={`of ◆${GEM_CAP} cap`} />
           <Stat n={`🔥${g.streak}`} l="day streak" />
-          <Stat n={String(Math.max(1, Math.min(5, Math.floor(g.streak / 4))))} l="blasts" />
+          <Stat n={`${g.bestClimb}m`} l="best climb" />
         </View>
         <Text style={st.note}>
           Five runs a day, and a gem cap. A game a child cannot grind is a game a child can put down.
@@ -79,7 +87,7 @@ export default function Dig({ onBack }: { onBack: () => void }) {
       </Card>
 
       <View style={{ marginTop: S.lg }}>
-        <Btn label={left > 0 ? 'Go down' : 'Come back tomorrow'} wide disabled={left <= 0}
+        <Btn label={left > 0 ? 'Begin the climb' : 'Come back tomorrow'} wide disabled={left <= 0}
           onPress={() => { if (g.startRun()) { setResult(null); setPlaying(true); } else nope(); }} />
       </View>
     </Screen>
@@ -105,7 +113,7 @@ function Stat({ n, l }: { n: string; l: string }) {
 
 function Board({ streak, lantern, helm, onQuit }: {
   streak: number; lantern: boolean; helm: boolean;
-  onQuit: (gems: number, won: boolean) => void;
+  onQuit: (gems: number, climbed: number, won: boolean) => void;
 }) {
   const game = useRef<GameState>(newGame(streak));
   if (helm && game.current.hp === 3) game.current.hp = 4;
@@ -130,7 +138,7 @@ function Board({ streak, lantern, helm, onQuit }: {
     fire(move(gm, dc, dr));
     reveal(gm, light);
     redraw();
-    if (gm.over) setTimeout(() => onQuit(gm.gems, gm.won), 620);
+    if (gm.over) setTimeout(() => onQuit(gm.gems, gm.climb, gm.won), 620);
   };
 
   const boom = () => {
@@ -153,14 +161,14 @@ function Board({ streak, lantern, helm, onQuit }: {
       trySpawn(gm);
       reveal(gm, light);
       redraw();
-      if (gm.over) setTimeout(() => onQuit(gm.gems, gm.won), 620);
+      if (gm.over) setTimeout(() => onQuit(gm.gems, gm.climb, gm.won), 620);
     }, TICK);
     return () => clearInterval(id);
   }, []);
 
   const gm = game.current;
   const L = layerAt(gm.py);
-  const camRow = Math.max(0, Math.min(ROWS - VIS_ROWS, gm.py - Math.floor(VIS_ROWS * 0.42)));
+  const camRow = Math.max(0, Math.min(ROWS - VIS_ROWS, gm.py - Math.floor(VIS_ROWS * 0.58)));
   const rows: React.ReactNode[] = [];
 
   for (let r = camRow; r < Math.min(ROWS, camRow + VIS_ROWS); r++) {
@@ -208,7 +216,7 @@ function Board({ streak, lantern, helm, onQuit }: {
         <View style={{ flex: 1 }} />
         <Text style={s.hudT}>{'❤️'.repeat(Math.max(0, gm.hp))}</Text>
         <Text style={[s.hudT, { color: C.gold }]}>◆{gm.gems}</Text>
-        <Text style={s.hudT}>{gm.depth}m</Text>
+        <Text style={s.hudT}>↑{gm.climb}m</Text>
       </View>
 
       <Canvas style={{ width: BOARD_W, height: BOARD_H, alignSelf: 'center' }}>
@@ -249,9 +257,9 @@ function Board({ streak, lantern, helm, onQuit }: {
             <Text style={{ fontSize: 26 }}>💥</Text>
             <Text style={s.boomN}>{gm.blasts}</Text>
           </Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel="Climb out and keep your gems"
-            onPress={() => { buzz(); onQuit(gm.gems, false); }} style={s.out}>
-            <Text style={s.outT}>Climb out</Text>
+          <Pressable accessibilityRole="button" accessibilityLabel="Turn back and keep your gems"
+            onPress={() => { buzz(); onQuit(gm.gems, gm.climb, false); }} style={s.out}>
+            <Text style={s.outT}>Turn back</Text>
           </Pressable>
         </View>
       </View>

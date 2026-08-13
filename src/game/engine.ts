@@ -1,4 +1,12 @@
-/** Deep Dig — pure logic, zero rendering. Unit-testable, reusable on any renderer. */
+/**
+ * The Expedition — pure logic, zero rendering. Unit-testable on any renderer.
+ *
+ * You start at the bottom of the world and dig UPWARD toward daylight. That
+ * direction is the whole product: get to the surface, help your Vaultling grow,
+ * learn to fly. The strata are the biomes from the world bible, richest and
+ * most dangerous at the bottom where you begin, easing as you climb — so
+ * lingering in the deep pays better and getting out is the safe play.
+ */
 export const COLS = 11, ROWS = 170;
 export const EMPTY=0, DIRT=1, ROCK=2, GEM=3, BIGGEM=4, HARD=5;
 
@@ -12,12 +20,12 @@ export type Layer = {
 /** Six strata, colours sampled from the locked concept art. Surface at r=0;
  *  the Sovereign Vein at the very bottom is the risk/reward payoff seam. */
 export const LAYERS: Layer[] = [
-  { y:0,   name:'TOPSOIL',           d1:'#703E17', dark:'#200900', d2:'#8C5A2E', vein:'#FCDE84', spark:0.06, rock:0.05, snatch:0.00 },
-  { y:26,  name:'ROOT ZONE',         d1:'#2C371A', dark:'#060A01', d2:'#45502E', vein:'#C0CD70', spark:0.10, rock:0.09, snatch:0.15 },
-  { y:56,  name:'CRYSTAL HOLLOW',    d1:'#13403A', dark:'#000D0B', d2:'#285C54', vein:'#5EE7D7', spark:0.15, rock:0.13, snatch:0.32 },
-  { y:90,  name:'EMBER SEAM',        d1:'#54160F', dark:'#160000', d2:'#712B1E', vein:'#F76C22', spark:0.21, rock:0.16, snatch:0.48 },
-  { y:126, name:'THE CRIMSON DEEP',  d1:'#450A14', dark:'#110001', d2:'#611A22', vein:'#E31127', spark:0.29, rock:0.20, snatch:0.66 },
-  { y:156, name:'SOVEREIGN VEIN',    d1:'#6B4A12', dark:'#1D0F00', d2:'#86652C', vein:'#FFE48A', spark:0.44, rock:0.23, snatch:0.80 },
+  { y:0,   name:'SURFACE LIGHT',   d1:'#703E17', dark:'#200900', d2:'#8C5A2E', vein:'#FCDE84', spark:0.06, rock:0.05, snatch:0.00 },
+  { y:26,  name:'VERDANT ROOT',    d1:'#2C371A', dark:'#060A01', d2:'#45502E', vein:'#C0CD70', spark:0.10, rock:0.09, snatch:0.15 },
+  { y:56,  name:'TIDE HOLLOW',     d1:'#13403A', dark:'#000D0B', d2:'#285C54', vein:'#5EE7D7', spark:0.15, rock:0.13, snatch:0.32 },
+  { y:90,  name:'EMBER REACH',     d1:'#54160F', dark:'#160000', d2:'#712B1E', vein:'#F76C22', spark:0.21, rock:0.16, snatch:0.48 },
+  { y:126, name:'CRYSTAL DEPTHS',  d1:'#450A14', dark:'#110001', d2:'#611A22', vein:'#E31127', spark:0.29, rock:0.20, snatch:0.66 },
+  { y:156, name:'THE DEEP',        d1:'#6B4A12', dark:'#1D0F00', d2:'#86652C', vein:'#FFE48A', spark:0.44, rock:0.23, snatch:0.80 },
 ];
 export const layerAt = (r:number) => LAYERS.reduce((a,l)=> r>=l.y ? l : a, LAYERS[0]);
 
@@ -25,7 +33,7 @@ export type Snatcher = { c:number; r:number };
 export type GameState = {
   grid: Uint8Array; hidden: Uint8Array;
   px:number; py:number; dx:number; dy:number;
-  gems:number; hp:number; blasts:number; depth:number;
+  gems:number; hp:number; blasts:number; climb:number;
   snatchers: Snatcher[]; over:boolean; won:boolean;
 };
 
@@ -48,14 +56,18 @@ export function newGame(streak:number, rnd:()=>number = Math.random): GameState 
       grid[idx(c,r)] = t;
     }
   }
-  for(let r=0;r<3;r++) for(let c=0;c<COLS;c++){ grid[idx(c,r)]=EMPTY; hidden[idx(c,r)]=0; }
-  return { grid, hidden, px:COLS>>1, py:2, dx:0, dy:0,
+  // you start at the bottom of the world, in a small pocket of cleared rock
+  for(let r=ROWS-3;r<ROWS;r++) for(let c=0;c<COLS;c++){ grid[idx(c,r)]=EMPTY; hidden[idx(c,r)]=0; }
+  return { grid, hidden, px:COLS>>1, py:ROWS-2, dx:0, dy:0,
            gems:0, hp:3, blasts:Math.max(1,Math.min(5,Math.floor(streak/4))),
-           depth:0, snatchers:[], over:false, won:false };
+           climb:0, snatchers:[], over:false, won:false };
 }
 
 /** Returns events so the renderer can spawn particles / haptics without owning logic. */
 export type Ev = { kind:'gem'|'biggem'|'hurt'|'blast'|'win'; c?:number; r?:number };
+
+/** How far above the start you have to get before daylight. */
+export const SURFACE_ROW = 2;
 
 export function move(g:GameState, dc:number, dr:number): Ev[] {
   const ev:Ev[] = [];
@@ -75,8 +87,9 @@ export function move(g:GameState, dc:number, dr:number): Ev[] {
   }
   g.grid[idx(nc,nr)]=EMPTY; g.hidden[idx(nc,nr)]=0;
   g.px=nc; g.py=nr;
-  if(nr>g.depth) g.depth=nr;
-  if(nr>=ROWS-3){ g.over=true; g.won=true; ev.push({kind:'win'}); }
+  // climb is measured from where you started, so it only ever goes up
+  g.climb = Math.max(g.climb, (ROWS-2) - nr);
+  if(nr<=2){ g.over=true; g.won=true; ev.push({kind:'win'}); }   // daylight
   return ev;
 }
 
@@ -116,7 +129,7 @@ export function trySpawn(g:GameState, rnd:()=>number = Math.random){
   const L = layerAt(g.py);
   if(rnd() > L.snatch || g.snatchers.length >= 4) return;
   for(let a=0;a<26;a++){
-    const r = g.py + 4 + Math.floor(rnd()*10), c = Math.floor(rnd()*COLS);
+    const r = g.py - 4 - Math.floor(rnd()*10), c = Math.floor(rnd()*COLS);
     if(inb(c,r) && g.grid[idx(c,r)]===EMPTY){ g.snatchers.push({c,r}); return; }
   }
 }
